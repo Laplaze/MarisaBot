@@ -89,11 +89,6 @@ const DIFF_HEX: Record<string, string> = {
     "WORLD'S END": "#dbaaff",
 };
 
-// 谱面行渐变色
-function rowGradient(color: string) {
-    return `linear-gradient(90deg, ${color}26 0%, rgba(0,0,0,0.42) 34%, rgba(0,0,0,0.42) 100%)`;
-}
-
 // 扣分计算: JUSTICE=10000/combo, ATTACK=JUSTICE×51, MISS=JUSTICE×101
 function deduction(combo: number) {
     const jst = 10000 / combo;
@@ -102,6 +97,27 @@ function deduction(combo: number) {
         atk:  (jst * 51).toFixed(1),
         jst:  jst.toFixed(1),
     };
+}
+
+function diffNameStyle(c: any): Record<string, string> {
+    if (c.LevelName === 'ULTIMA')
+        return { backgroundColor: '#000', color: '#fff', width: diffNameWidth.value + 'px' };
+    return { backgroundColor: DIFF_COLORS[c.LevelName] || '#888', color: '#fff', width: diffNameWidth.value + 'px' };
+}
+
+function diffLevelStyle(c: any): Record<string, string> {
+    if (c.LevelName === 'ULTIMA')
+        return { backgroundColor: '#000', color: '#fff' };
+    return { backgroundColor: DIFF_LIGHT[c.LevelName] || '#555', color: '#222' };
+}
+
+function rowStyleFor(c: any): Record<string, string> {
+    const hex = DIFF_HEX[c.LevelName] || '#fff';
+    const col = DIFF_COLORS[c.LevelName] || '#fff';
+    const bg = `linear-gradient(90deg, ${hex}26 0%, rgba(0,0,0,0.42) 34%, rgba(0,0,0,0.42) 100%)`;
+    if (c.LevelName === 'ULTIMA')
+        return { background: bg, borderLeft: '4px solid #FF3A3A' };
+    return { background: bg, boxShadow: `inset 4px 0 0 ${col}`, border: '1px solid rgba(255,255,255,0.09)' };
 }
 
 function calcTol(N: number) {
@@ -127,28 +143,31 @@ const ultimaTol = computed(() => {
 });
 
 const chartCount = computed(() => song.value.Beatmaps?.length || 0);
+const hasWE = computed(() => (song.value.Beatmaps as any[])?.some((b: any) => b.LevelName === "WORLD'S END") ?? false);
+const diffNameWidth = computed(() => hasWE.value ? 220 : 160);
 
 // ── 标题自动缩字 ──
 const titleEl   = ref<HTMLElement | null>(null);
-const titleSize = ref(62);
+const titleSize = ref(80);
 const TITLE_MIN = 28;
+const TITLE_MAX = 80;
 
 async function fitTitle() {
     await nextTick();
     const el = titleEl.value;
     if (!el) return;
-    el.style.fontSize = '62px';
+    el.style.fontSize = TITLE_MAX + 'px';
     try { await document.fonts.ready } catch {}
     await nextTick();
     for (let pass = 0; pass < 4 && el.scrollWidth > el.clientWidth; pass++) {
-        const next = Math.floor(62 * el.clientWidth / el.scrollWidth);
+        const next = Math.floor(TITLE_MAX * el.clientWidth / el.scrollWidth);
         titleSize.value = Math.max(TITLE_MIN, Math.min(next, titleSize.value - 1));
         await nextTick();
         if (titleSize.value <= TITLE_MIN) break;
     }
 }
 
-watch(() => song.value.Title, () => { titleSize.value = 62; nextTick(fitTitle); });
+watch(() => song.value.Title, () => { titleSize.value = TITLE_MAX; nextTick(fitTitle); });
 
 onMounted(() => { nextTick(fitTitle); });
 </script>
@@ -245,21 +264,15 @@ onMounted(() => { nextTick(fitTitle); });
                          <div v-for="(c, i) in song.Beatmaps" :key="i"
                               class="chart-row"
                               :class="{ 'row-ultima': c.LevelName === 'ULTIMA' }"
-                              :style="c.LevelName !== 'ULTIMA'
-                                ? { background: rowGradient(DIFF_HEX[c.LevelName] || '#fff'), boxShadow: `inset 4px 0 0 ${DIFF_COLORS[c.LevelName] || '#fff'}`, border: '1px solid rgba(255,255,255,0.09)' }
-                                : {}">
+                              :style="rowStyleFor(c)">
                             <div class="chart-row-top">
                                 <div class="diff-chip">
                                     <span class="diff-name"
-                                          :style="c.LevelName === 'ULTIMA'
-                                            ? { backgroundColor: '#000', color: '#fff' }
-                                            : { backgroundColor: DIFF_COLORS[c.LevelName] || '#888', color: '#fff' }">
+                                          :style="diffNameStyle(c)">
                                         {{ c.LevelName }}
                                     </span>
                                     <span class="diff-level"
-                                          :style="c.LevelName === 'ULTIMA'
-                                            ? { backgroundColor: '#000', color: '#fff' }
-                                            : { backgroundColor: DIFF_LIGHT[c.LevelName] || '#555', color: '#222' }">
+                                          :style="diffLevelStyle(c)">
                                         {{ c.LevelStr }}
                                     </span>
                                 </div>
@@ -374,7 +387,7 @@ onMounted(() => { nextTick(fitTitle); });
 }
 
 /* ── 双列 ── */
-.two-col { display: flex; gap: 28px; margin: 0 44px; }
+.two-col { display: flex; gap: 28px; margin: 0 44px; align-items: stretch; }
 
 .left-col { width: 452px; flex-shrink: 0; display: flex; flex-direction: column; }
 
@@ -386,7 +399,7 @@ onMounted(() => { nextTick(fitTitle); });
 .cover-img { display: block; width: 440px; height: 440px; object-fit: cover; border-radius: 24px; }
 
 /* ── 容错 ── */
-.tolerance-section { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+.tolerance-section { display: flex; flex-direction: column; gap: 12px; margin-top: auto; }
 
 .tol-block { border-radius: 12px; background: rgba(255,255,255,0.05); overflow: hidden; box-shadow: inset 3px 0 0 var(--tc-accent); }
 .tol-block.master { --tc-accent: rgb(198, 79, 228); }
@@ -406,11 +419,11 @@ onMounted(() => { nextTick(fitTitle); });
 
 .tol-rows { display: flex; padding: 4px 0 10px 0; }
 
-.tol-cell { flex: 1; display: flex; align-items: baseline; justify-content: center; gap: 8px; }
+.tol-cell { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; }
 
-.tol-icon { height: 28px; width: auto; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); position: relative; top: 3px; }
+.tol-icon { height: 28px; width: auto; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4)); position: relative; top: 1px; }
 
-.tol-thresh { font-weight: bold; font-size: 30px; color: #22c55e; }
+.tol-thresh { font-weight: bold; font-size: 31px; color: #22c55e; }
 
 .tol-delta { font-weight: bold; font-size: 24px; color: #f59e0b; }
 
@@ -451,8 +464,8 @@ onMounted(() => { nextTick(fitTitle); });
 .diff-name {
     display: flex; align-items: center; padding: 0 14px 0 18px; font-weight: bold;
     font-size: 20px; letter-spacing: 0.06em; color: #fff;
-    width: 220px; justify-content: flex-end; box-sizing: border-box;
-    white-space: nowrap;
+    justify-content: flex-end; box-sizing: border-box;
+    white-space: nowrap; flex-shrink: 0;
 }
 
 .diff-level {

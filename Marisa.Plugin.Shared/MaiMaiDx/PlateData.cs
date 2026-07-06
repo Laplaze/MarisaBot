@@ -612,7 +612,8 @@ public static class PlateData
 
     /// <summary>
     ///     难度别名表。**故意不收单字**（绿/黄/红/紫/白），因为这些字跟代字（紫=MURASAKi、白=MiLK）
-    ///     或者用户预期的别名会冲突。要写中文必须双字"绿谱/黄谱/红谱/紫谱/白谱"。
+    ///     或者用户预期的别名会冲突。要写中文必须双字"绿谱/黄谱/红谱/紫谱/白谱"
+    ///     （单字色名仅 <see cref="TryStripDifficultyPrefix"/> 在句首且后随空格时接受）。
     ///     Re:MASTER 是合法的 difficulty（用户显式指定时才走），但不是所有歌都有该难度。
     /// </summary>
     public static readonly Dictionary<string, int> DifficultyAliasMap = new(StringComparer.OrdinalIgnoreCase)
@@ -620,13 +621,96 @@ public static class PlateData
         ["BASIC"]     = 0, ["BSC"] = 0, ["绿谱"] = 0,
         ["ADVANCED"]  = 1, ["ADV"] = 1, ["黄谱"] = 1,
         ["EXPERT"]    = 2, ["EXP"] = 2, ["红谱"] = 2,
-        ["MASTER"]    = 3, ["MST"] = 3, ["紫谱"] = 3,
-        ["Re:MASTER"] = 4, ["白谱"] = 4,
+        ["MASTER"]    = 3, ["MST"] = 3, ["MAS"] = 3, ["紫谱"] = 3,
+        ["Re:MASTER"] = 4, ["ReMASTER"] = 4, ["ReMAS"] = 4, ["白谱"] = 4,
     };
 
     private static readonly (string Token, int LevelIdx)[] DifficultyEntriesLongestFirst =
         DifficultyAliasMap.Select(kv => (kv.Key, kv.Value))
             .OrderByDescending(t => t.Key.Length).ToArray();
+
+    /// <summary>单字色名（仅句首前缀接受）。不进 <see cref="DifficultyAliasMap"/>：完成表的
+    /// anywhere 匹配下单字与版本代字冲突（紫=MURASAKi、白=MiLK）。</summary>
+    private static readonly (char Color, int LevelIdx)[] SingleColorEntries =
+        [('绿', 0), ('黄', 1), ('红', 2), ('紫', 3), ('白', 4)];
+
+    /// <summary>
+    ///     从命令开头剥离难度别名前缀（「白谱 歌名」「MST歌名」）。仅句首匹配、最长优先；
+    ///     含 ASCII 字母的 token 沿用词边界规则（后随字符不能是 ASCII 字母，防止吞掉
+    ///     MASTERPIECE 这类歌名开头）；剥离后剩余部分为空时不算匹配（「紫谱」单独出现按歌名处理）。
+    ///     单字色名仅在后随空白时接受（「紫 潘」）——无此约束「白金ディスコ」「红莲华」这类
+    ///     以色字开头的歌名/别名会被误剥成难度。
+    /// </summary>
+    public static bool TryStripDifficultyPrefix(ReadOnlyMemory<char> input, out int levelIdx, out ReadOnlyMemory<char> rest)
+    {
+        foreach (var (token, idx) in DifficultyEntriesLongestFirst)
+        {
+            if (input.Length <= token.Length) continue;
+            if (!input.Span.StartsWith(token, StringComparison.OrdinalIgnoreCase)) continue;
+            if (token.Any(IsAsciiLetter) && IsAsciiLetter(input.Span[token.Length])) continue;
+
+            var remaining = input[token.Length..].Trim();
+            if (remaining.IsEmpty) continue;
+
+            levelIdx = idx;
+            rest     = remaining;
+            return true;
+        }
+
+        if (input.Length > 2 && char.IsWhiteSpace(input.Span[1]))
+        {
+            foreach (var (color, idx) in SingleColorEntries)
+            {
+                if (input.Span[0] != color) continue;
+
+                var remaining = input[1..].Trim();
+                if (remaining.IsEmpty) continue;
+
+                levelIdx = idx;
+                rest     = remaining;
+                return true;
+            }
+        }
+
+        levelIdx = -1;
+        rest     = input;
+        return false;
+    }
+
+    /// <summary>
+    ///     对话上下文（消息内无歌名混杂，如容错率的难度询问）的宽松难度前缀：
+    ///     在 <see cref="TryStripDifficultyPrefix"/> 基础上解除单字色名的空格约束、
+    ///     额外接受难度全名首字母（B/A/E/M/R），且剩余部分可为空。
+    /// </summary>
+    public static bool TryStripDifficultyPrefixLoose(ReadOnlyMemory<char> input, out int levelIdx, out ReadOnlyMemory<char> rest)
+    {
+        foreach (var (token, idx) in DifficultyEntriesLongestFirst)
+        {
+            if (!input.Span.StartsWith(token, StringComparison.OrdinalIgnoreCase)) continue;
+            if (token.Any(IsAsciiLetter) && input.Length > token.Length && IsAsciiLetter(input.Span[token.Length])) continue;
+
+            levelIdx = idx;
+            rest     = input[token.Length..].Trim();
+            return true;
+        }
+
+        if (!input.IsEmpty)
+        {
+            var head = input.Span[0];
+            var ci   = Array.FindIndex(SingleColorEntries, e => e.Color == head);
+
+            levelIdx = ci >= 0 ? SingleColorEntries[ci].LevelIdx : "BAEMR".IndexOf(char.ToUpperInvariant(head));
+            if (levelIdx >= 0)
+            {
+                rest = input[1..].Trim();
+                return true;
+            }
+        }
+
+        levelIdx = -1;
+        rest     = input;
+        return false;
+    }
 
     /// <summary>
     ///     解析完整命令字符串（剥过 plugin 前缀后的部分）。

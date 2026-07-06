@@ -199,6 +199,11 @@ public static class WebApi
         return await RenderUrl("/maimai/song-titles?id=" + contextId);
     }
 
+    public static async Task<string> MaiMaiDifficultyCurve(long songId, int? levelIdx)
+    {
+        return await RenderUrl("/maimai/difficulty-curve?id=" + songId + (levelIdx == null ? "" : "&idx=" + levelIdx));
+    }
+
     public static async Task<string> OngekiSong(int id)
     {
         return await RenderUrl($"/ongeki/song/{id}");

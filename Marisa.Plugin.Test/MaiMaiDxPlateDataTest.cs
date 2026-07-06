@@ -1266,4 +1266,65 @@ public class MaiMaiDxPlateDataTest
     {
         Assert.That(PlateData.NamePlateImage(MustParse(raw)), Is.Null);
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 难度别名前缀剥离（curve 等按曲命令的可选难度前缀）。
+    // ──────────────────────────────────────────────────────────────────────
+
+    [TestCase("白谱 系ぎて",       4, "系ぎて")]
+    [TestCase("紫谱潘",            3, "潘")]      // 双字/全名/缩写空格可选
+    [TestCase("红谱11663",         2, "11663")]   // 歌曲 id 同样可接
+    [TestCase("mst 潘",            3, "潘")]      // 大小写不敏感
+    [TestCase("MAS潘",             3, "潘")]      // 社区惯用缩写；最长优先保证不抢 MASTER
+    [TestCase("Re:MASTER 系ぎて",  4, "系ぎて")]
+    [TestCase("remas 系ぎて",      4, "系ぎて")]  // 免冒号缩写
+    [TestCase("ReMASTER系ぎて",    4, "系ぎて")]
+    [TestCase("EXP1",              2, "1")]       // ASCII token 后随数字满足词边界
+    [TestCase("紫 潘",             3, "潘")]      // 单字色名 + 空格
+    [TestCase("白 系ぎて",         4, "系ぎて")]
+    public void DifficultyPrefixStrips(string input, int idx, string rest)
+    {
+        var ok = PlateData.TryStripDifficultyPrefix(input.AsMemory(), out var levelIdx, out var remaining);
+        Assert.That(ok, Is.True);
+        Assert.That(levelIdx, Is.EqualTo(idx));
+        Assert.That(remaining.ToString(), Is.EqualTo(rest));
+    }
+
+    [TestCase("MASTERPIECE")]          // ASCII token 后随字母不算前缀
+    [TestCase("白い雪のプリンセスは")] // 单字色名后无空格：「白」开头的歌名不受影响
+    [TestCase("白金ディスコ")]
+    [TestCase("红莲华")]               // 别名以色字开头同样不受影响
+    [TestCase("紫潘")]                 // 单字色名必须后随空格
+    [TestCase("紫谱")]                 // 剥离后为空：整串按歌名
+    [TestCase("系ぎて")]
+    public void DifficultyPrefixLeavesSongQueryIntact(string input)
+    {
+        var ok = PlateData.TryStripDifficultyPrefix(input.AsMemory(), out _, out var remaining);
+        Assert.That(ok, Is.False);
+        Assert.That(remaining.ToString(), Is.EqualTo(input));
+    }
+
+    // 宽松变体（容错率对话等无歌名混杂的上下文）：单字免空格、接受首字母、剩余可为空。
+    [TestCase("紫100.5",        3, "100.5")]
+    [TestCase("m100",           3, "100")]
+    [TestCase("r99.5",          4, "99.5")]
+    [TestCase("MAS100",         3, "100")]
+    [TestCase("Re:Master 100",  4, "100")]
+    [TestCase("绿谱100",        0, "100")]
+    [TestCase("master",         3, "")]     // 剩余为空由达成率解析处理
+    public void LooseDifficultyPrefixStrips(string input, int idx, string rest)
+    {
+        var ok = PlateData.TryStripDifficultyPrefixLoose(input.AsMemory(), out var levelIdx, out var remaining);
+        Assert.That(ok, Is.True);
+        Assert.That(levelIdx, Is.EqualTo(idx));
+        Assert.That(remaining.ToString(), Is.EqualTo(rest));
+    }
+
+    [TestCase("100.5")]
+    [TestCase("x100")]
+    [TestCase("")]
+    public void LooseDifficultyPrefixRejectsNonDifficulty(string input)
+    {
+        Assert.That(PlateData.TryStripDifficultyPrefixLoose(input.AsMemory(), out _, out _), Is.False);
+    }
 }

@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,6 +10,7 @@ using Marisa.Plugin.Shared.Lxns;
 using Marisa.Plugin.Shared.MaiMaiDx;
 using Marisa.Plugin.Shared.MaiMaiDx.DataFetcher;
 using Marisa.Plugin.Shared.Util;
+using Marisa.Plugin.Shared.Util.Cacheable;
 using Marisa.Plugin.Shared.Util.SongDb;
 
 namespace Marisa.Plugin.MaiMaiDx;
@@ -756,6 +757,27 @@ public partial class MaiMaiDx
         }
 
         message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiDifficultyCurve(song.Id, levelIdx)));
+
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>
+    ///     段位認定曲目表
+    /// </summary>
+    [MarisaPluginDoc("查询段位认定的曲目与判定规则", "可选`版本`（缺省国服现行）+ `段位名`，如：`prism 十段`")]
+    [MarisaPluginCommand("dan", "段位表", "段位")]
+    private static MarisaPluginTaskState DanCourse(Message message)
+    {
+        if (!DanData.TryParse(message.Command.ToString(), out var version, out var dani, out var error))
+        {
+            message.Reply(error!);
+            return MarisaPluginTaskState.CompletedTask;
+        }
+
+        // 卡片内容全静态，渲染结果按（版本, 段位, 数据指纹）落盘缓存
+        var cache = Path.Join(ResourceManager.TempPath, $"DanCourse.{version}.{dani}.{DanData.DataHash}.b64");
+        message.Reply(MessageDataImage.FromBase64(
+            new CacheableText(cache, () => WebApi.MaiMaiDanCourse(version, dani).Result).Value));
 
         return MarisaPluginTaskState.CompletedTask;
     }

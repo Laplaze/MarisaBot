@@ -6,10 +6,10 @@
     --col-count: 8;
     --border-overflow: 10px;            /* 边框图比 cell 大的那一圈 */
     --level-mark-size: 14px;            /* 难度小三角 */
-    --rank-marker-height: 60px;         /* Achievement 维度的 rank_*.png（200x89，宽按比例） */
+    --rank-marker-height: 42px;         /* Achievement 维度的 rank_*.png（UI_GAM 经典版裁到内容，宽按比例） */
     --icon-marker-height: 75px;         /* Fc/Fs 的 icon_*.png（近方形） */
     --achievement-bar-height: 42px;     /* sum 模式底部黑条 */
-    --sum-rank-height: 60px;            /* sum 模式中心 rank（同 rank-marker-height） */
+    --sum-rank-height: 44px;            /* sum 模式中心 rank */
 
     padding: 40px;
     background: white;
@@ -52,6 +52,20 @@
     flex: 0 0 720px;         /* 固定大条宽度 720px，永远贴 grid 右边界（留出空间给长标题） */
 }
 
+/* 游戏内成就姓名框（「樱将完成表」这类查询）：原尺寸居中独立一行放在标题下方。
+   注意本文件有 .mai-summary img { max-width: none }，此处用显式 width 而非 max-width。 */
+.nameplate-row {
+    display: flex;
+    justify-content: center;
+    margin: 4px 0 16px;
+    width: calc(var(--col-count) * var(--cell-size) + (var(--col-count) - 1) * var(--cell-gap) + var(--border-overflow));
+}
+
+.nameplate-row img {
+    width: 720px;            /* 原尺寸 720×116 */
+    height: 116px;
+}
+
 .groups {
     display: flex;
     flex-direction: column;
@@ -77,7 +91,7 @@
 }
 
 .min-rank {
-    height: 50px;
+    height: 42px;
     /* push 到 stats-bar 左边界外，跟 stats-bar 隔 group-title 的 gap (6px) */
     margin-left: auto;
 }

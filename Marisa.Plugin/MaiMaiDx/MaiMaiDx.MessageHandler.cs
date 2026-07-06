@@ -706,6 +706,115 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
+    /// <summary>
+    ///     单曲各难度成绩
+    /// </summary>
+    [MarisaPluginDoc("查询某首歌各个难度的个人成绩", "`歌曲名` 或 `歌曲别名` 或 `歌曲id` 或表达式（例如`const>10`）")]
+    [MarisaPluginCommand("info", "信息")]
+    private async Task<MarisaPluginTaskState> SongInfo(Message message)
+    {
+        var song = await SongDb.MultiPageSelectResult(SongDb.SearchSong(message.Command.Trim()), message, false, true);
+        if (song == null) return MarisaPluginTaskState.CompletedTask;
+
+        var context = await BuildSongScoreContext(message, song);
+        message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiSongScore(context.Id)));
+
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>
+    ///     拟合难度曲线
+    /// </summary>
+    [MarisaPluginDoc("查询谱面的拟合难度曲线", "可选难度前缀（如`白谱`）+ `歌曲名` 或 `歌曲别名` 或 `歌曲id` 或表达式（例如`const>10`）")]
+    [MarisaPluginCommand("curve", "曲线")]
+    private async Task<MarisaPluginTaskState> SongDifficultyCurve(Message message)
+    {
+        var command = message.Command.Trim();
+
+        int? levelIdx = null;
+        if (PlateData.TryStripDifficultyPrefix(command, out var idx, out var rest))
+        {
+            levelIdx = idx;
+            command  = rest;
+        }
+
+        var song = await SongDb.MultiPageSelectResult(SongDb.SearchSong(command), message, false, true);
+        if (song == null) return MarisaPluginTaskState.CompletedTask;
+
+        if (levelIdx >= song.Charts.Count)
+        {
+            message.Reply($"该谱面没有 {MaiMaiSong.LevelNameAll[levelIdx.Value]} 难度");
+            return MarisaPluginTaskState.CompletedTask;
+        }
+
+        message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiDifficultyCurve(song.Id, levelIdx)));
+
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>
+    ///     单曲可解锁称号
+    /// </summary>
+    [MarisaPluginDoc("查询某首歌可解锁的游戏内称号", "`歌曲名` 或 `歌曲别名` 或 `歌曲id` 或表达式（例如`const>10`）")]
+    [MarisaPluginCommand("称号", "title")]
+    private async Task<MarisaPluginTaskState> SongTitles(Message message)
+    {
+        var song = await SongDb.MultiPageSelectResult(SongDb.SearchSong(message.Command.Trim()), message, false, true);
+        if (song == null) return MarisaPluginTaskState.CompletedTask;
+
+        var context = await BuildSongScoreContext(message, song);
+        message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiSongTitles(context.Id)));
+
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>
+    ///     单曲成绩 WebContext（info 与 称号 共用；称号页用各难度成绩判定达成状态）
+    /// </summary>
+    private async Task<WebContext> BuildSongScoreContext(Message message, MaiMaiSong song)
+    {
+        var fetcher = GetDataFetcher(message);
+        var self    = message with { Command = "".AsMemory() };
+
+        // 只取这一首歌各难度的成绩：各查分器优先走自己的「单曲成绩接口」，避免拉取整个成绩表
+        var (nickname, scores) = await fetcher.GetSongScore(self, song);
+
+        var context = new WebContext();
+        context.Put("SongScore", new
+        {
+            Song = new
+            {
+                song.Id, song.Title, song.Type,
+                song.Info.Artist, song.Info.Genre, song.Info.Bpm, song.Info.From, song.Info.IsNew
+            },
+            Player = new
+            {
+                Nickname = nickname ?? ""
+            },
+            Charts = song.Levels.Select((level, i) =>
+            {
+                var played = scores.TryGetValue(i, out var sc);
+                return new
+                {
+                    LevelIndex  = i,
+                    Level       = level,
+                    Constant    = song.Constants[i],
+                    Charter     = song.Charters[i],
+                    MaxDx       = song.Charts[i].Notes.Sum() * 3,
+                    Played      = played,
+                    Achievement = played ? sc!.Achievement : (double?)null,
+                    Rank        = played ? sc!.Rank : null,
+                    Ra          = played ? sc!.Rating : (int?)null,
+                    Fc          = played ? sc!.Fc : null,
+                    Fs          = played ? sc!.Fs : null,
+                    DxScore     = played ? sc!.DxScore : (int?)null
+                };
+            }).ToList()
+        });
+
+        return context;
+    }
+
     #endregion
 
     #region 锐评 / roast
@@ -1185,20 +1294,13 @@ public partial class MaiMaiDx
             // 复活曲集合（虚拟类别）。
             PlateData.Selector.Revival => PlateData.IsRevivalSong(song.Id),
 
-            // substring 匹配：兼容 "サファ太 vs 翠楼屋" 这种合作谱师名义。
-            // 本名命中后再并查其高难马甲（如打"翠楼屋"也带出"翡翠マナ"）。
             PlateData.Selector.Charter c =>
                 levelIdx < song.Charters.Count
-                && (song.Charters[levelIdx].Contains(c.Name, StringComparison.OrdinalIgnoreCase)
-                    || PlateData.CharterAlterEgos(c.Name).Any(e =>
-                        song.Charters[levelIdx].Contains(e, StringComparison.OrdinalIgnoreCase))),
+                && PlateData.MatchCharter(song.Charters[levelIdx], c.Name),
 
-            // 谱师别名：任一 canonical substring 命中即可（OR），覆盖本名 / 高难马甲 / 合作名义；
-            // 但命中 Exclude 的署名（含 substring 却不属本人）要剔除。
             PlateData.Selector.CharterAlias ca =>
                 levelIdx < song.Charters.Count
-                && ca.Names.Any(n => song.Charters[levelIdx].Contains(n, StringComparison.OrdinalIgnoreCase))
-                && !ca.Exclude.Any(x => song.Charters[levelIdx].Contains(x, StringComparison.OrdinalIgnoreCase)),
+                && PlateData.MatchCharter(song.Charters[levelIdx], ca.Names, ca.Exclude),
 
             // song-level substring 匹配，兼容 "sasakure.UK x DECO*27" 这种合作作曲名义。
             PlateData.Selector.Artist a =>
@@ -1208,7 +1310,7 @@ public partial class MaiMaiDx
             // 谱师 ∪ 作曲家：处理 "rintaro soma" 这种身兼两职的人。
             PlateData.Selector.CharterOrArtist ca =>
                 (levelIdx < song.Charters.Count
-                 && song.Charters[levelIdx].Contains(ca.Name, StringComparison.OrdinalIgnoreCase))
+                 && PlateData.MatchCharter(song.Charters[levelIdx], ca.Name))
                 || (!string.IsNullOrEmpty(song.Info.Artist)
                     && song.Info.Artist.Contains(ca.Name, StringComparison.OrdinalIgnoreCase)),
 
@@ -1259,10 +1361,14 @@ public partial class MaiMaiDx
         var current = new
         {
             OldScores = rating.OldScores
-                .Select(x => (SongDb.GetSongById(x.Id)!, x.LevelIdx, x.Achievement, x.Rating))
+                .Select(x => (Song: SongDb.GetSongById(x.Id), x.LevelIdx, x.Achievement, x.Rating))
+                .Where(x => x.Song != null)
+                .Select(x => (x.Song!, x.LevelIdx, x.Achievement, x.Rating))
                 .OrderByDescending(x => x.Item4),
             NewScores = rating.NewScores
-                .Select(x => (SongDb.GetSongById(x.Id)!, x.LevelIdx, x.Achievement, x.Rating))
+                .Select(x => (Song: SongDb.GetSongById(x.Id), x.LevelIdx, x.Achievement, x.Rating))
+                .Where(x => x.Song != null)
+                .Select(x => (x.Song!, x.LevelIdx, x.Achievement, x.Rating))
                 .OrderByDescending(x => x.Item4)
         };
 
@@ -1403,24 +1509,13 @@ public partial class MaiMaiDx
         {
             var command = next.Command.Trim();
 
-            var levelName   = MaiMaiSong.LevelNameAll.Concat(MaiMaiSong.LevelNameZh).ToList();
-            var level       = levelName.FirstOrDefault(n => command.StartsWith(n, StringComparison.OrdinalIgnoreCase));
-            var levelPrefix = level ?? "";
-            if (level != null) goto RightLabel;
-
-            level = levelName.FirstOrDefault(n =>
-                command.StartsWith(n[0].ToString(), StringComparison.OrdinalIgnoreCase));
-            if (level != null)
+            if (!PlateData.TryStripDifficultyPrefixLoose(command, out var levelIdx, out var rest))
             {
-                levelPrefix = command.Span[0].ToString();
-                goto RightLabel;
+                next.Reply("错误的难度格式，会话已关闭。可用难度格式：难度全名、缩写、颜色或全名首字母");
+                return Task.FromResult(MarisaPluginTaskState.CompletedTask);
             }
 
-            next.Reply("错误的难度格式，会话已关闭。可用难度格式：难度全名、难度全名的首字母或难度颜色");
-            return Task.FromResult(MarisaPluginTaskState.CompletedTask);
-
-            RightLabel:
-            var parseSuccess = double.TryParse(command[levelPrefix.Length..].Span, out var achievement);
+            var parseSuccess = double.TryParse(rest.Span, out var achievement);
 
             if (!parseSuccess)
             {
@@ -1434,7 +1529,11 @@ public partial class MaiMaiDx
                 return Task.FromResult(MarisaPluginTaskState.CompletedTask);
             }
 
-            var levelIdx = levelName.IndexOf(level) % MaiMaiSong.LevelNameAll.Count;
+            if (levelIdx >= song.Charts.Count)
+            {
+                next.Reply("该谱面没有这个难度，会话已关闭");
+                return Task.FromResult(MarisaPluginTaskState.CompletedTask);
+            }
             var (x, y) = song.NoteScore(levelIdx);
 
             var tolerance = (int)((101 - achievement) / (0.2 * x));

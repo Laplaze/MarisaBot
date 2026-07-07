@@ -732,6 +732,24 @@ public partial class MaiMaiDx
     {
         var command = message.Command.Trim();
 
+        // 排名查询的英文别名（lv/base 等）不注册为子命令：命令匹配是裸前缀，会吞掉这些字母
+        // 开头的歌名查询。改为验证门禁——别名后跟合法等级/定数才当排名，否则整串按歌名处理
+        (string Alias, bool IsLevel)[] rankAliases = [("level", true), ("lv", true), ("base", false), ("b", false)];
+        foreach (var (alias, isLevel) in rankAliases)
+        {
+            if (!command.Span.StartsWith(alias, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var value = command[alias.Length..].Trim().ToString();
+            if (isLevel && TryParseLevel(value, out var level))
+            {
+                return ReplyDifficultyCurveRank(message, "level", level);
+            }
+            if (!isLevel && TryParseConstant(value, out var constant))
+            {
+                return ReplyDifficultyCurveRank(message, "ds", constant.ToString("0.0"));
+            }
+        }
+
         // 整串优先：完整输入能搜到歌就按纯歌名处理（保护「白金ディスコ」这类以色字开头的
         // 歌名），无结果时再尝试剥离句首/句尾的难度字段重搜
         var searchResult = SongDb.SearchSong(command);
@@ -758,6 +776,44 @@ public partial class MaiMaiDx
 
         message.Reply(MessageDataImage.FromBase64(await WebApi.MaiMaiDifficultyCurve(song.Id, levelIdx)));
 
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>排名图与玩家无关、只随曲线数据变化：按（查询, 数据版本哈希）落盘缓存，
+    /// 数据随前端更新后旧文件名失效（同 MaiMaiSong.GetImage 的带哈希缓存惯例）。</summary>
+    private static MarisaPluginTaskState ReplyDifficultyCurveRank(Message message, string kind, string value)
+    {
+        var path = Path.Join(ResourceManager.TempPath, $"CurveRank.{kind}.{value}.{CurveDataHash.Value}.b64");
+        message.Reply(MessageDataImage.FromBase64(new CacheableText(path,
+            () => WebApi.MaiMaiDifficultyCurveRank(kind, value).Result).Value));
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    [MarisaPluginDoc("某等级全部谱面的拟合难度排名", "`等级`（如`13+`；别名`lv`）")]
+    [MarisaPluginSubCommand(nameof(SongDifficultyCurve))]
+    [MarisaPluginCommand("等级")]
+    private static MarisaPluginTaskState SongDifficultyCurveRankByLevel(Message message)
+    {
+        if (TryParseLevel(message.Command.Trim().ToString(), out var level))
+        {
+            return ReplyDifficultyCurveRank(message, "level", level);
+        }
+
+        message.Reply("等级应为 1-15，可带加号（如13+）");
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    [MarisaPluginDoc("某定数全部谱面的拟合难度排名", "`定数`（如`14.7`；别名`base`）")]
+    [MarisaPluginSubCommand(nameof(SongDifficultyCurve))]
+    [MarisaPluginCommand("定数")]
+    private static MarisaPluginTaskState SongDifficultyCurveRankByConstant(Message message)
+    {
+        if (TryParseConstant(message.Command.Trim().ToString(), out var constant))
+        {
+            return ReplyDifficultyCurveRank(message, "ds", constant.ToString("0.0"));
+        }
+
+        message.Reply("定数应为 1.0-15.0（如14.7）");
         return MarisaPluginTaskState.CompletedTask;
     }
 
@@ -1159,49 +1215,25 @@ public partial class MaiMaiDx
     [MarisaPluginCommand("level", "lv")]
     private async Task<MarisaPluginTaskState> SummaryLevel(Message message)
     {
-        var lv = message.Command.Trim();
-
-        if (LvRegex().IsMatch(lv.ToString()))
+        if (!TryParseLevel(message.Command.Trim().ToString(), out var level))
         {
-            var maxLv = lv.Span[^1] == '+' ? 14 : 15;
-            var lvNr  = lv.Span[^1] == '+' ? lv[..^1] : lv;
-
-            if (int.TryParse(lvNr.Span, out var i))
-            {
-                if (!(1 <= i && i <= maxLv))
-                {
-                    goto _error;
-                }
-            }
-            else
-            {
-                goto _error;
-            }
-        }
-        else
-        {
-            goto _error;
+            message.Reply("错误的命令格式");
+            return MarisaPluginTaskState.CompletedTask;
         }
 
-            var fetcher = GetDataFetcher(message);
-            var scores  = await fetcher.GetScores(message);
+        var fetcher = GetDataFetcher(message);
+        var scores  = await fetcher.GetScores(message);
 
         var groupedSong = SongDb.SongList
             .Select(song => song.Constants
                 .Select((constant, i) => (constant, i, song)))
             .SelectMany(s => s)
-            .Where(data => data.song.Levels[data.i].Equals(lv, StringComparison.Ordinal))
+            .Where(data => data.song.Levels[data.i].Equals(level, StringComparison.Ordinal))
             .OrderByDescending(x => x.constant)
             .GroupBy(x => x.constant.ToString("F1"));
 
-        var im = await MaiMaiDraw.DrawGroupedSong(groupedSong, scores, lv.ToString());
-            message.Reply(MessageDataImage.FromBase64(im));
-
-        return MarisaPluginTaskState.CompletedTask;
-
-        // 集中处理错误
-        _error:
-        message.Reply("错误的命令格式");
+        var im = await MaiMaiDraw.DrawGroupedSong(groupedSong, scores, level);
+        message.Reply(MessageDataImage.FromBase64(im));
 
         return MarisaPluginTaskState.CompletedTask;
     }
@@ -1465,25 +1497,29 @@ public partial class MaiMaiDx
     [MarisaPluginCommand("line", "分数线")]
     private static MarisaPluginTaskState RatingLine(Message message)
     {
-        if (double.TryParse(message.Command.Span, out var constant))
+        var command = message.Command.Trim().ToString();
+
+        // 定数分支走严格解析（一位小数，拒符号/千分位/NaN），预期 rating 分支照旧
+        if (TryParseConstant(command, out var constant))
         {
-            switch (constant)
+            var a   = 96.9999;
+            var ret = "达成率 -> Rating";
+
+            while (a < 100.5)
             {
-                case <= 15.0 and >= 1:
-                {
-                    var a   = 96.9999;
-                    var ret = "达成率 -> Rating";
+                a = SongScore.NextRa(a, constant);
+                var ra = SongScore.Ra(a, constant);
+                ret = $"{ret}\n{a:000.0000} -> {ra}";
+            }
 
-                    while (a < 100.5)
-                    {
-                        a = SongScore.NextRa(a, constant);
-                        var ra = SongScore.Ra(a, constant);
-                        ret = $"{ret}\n{a:000.0000} -> {ra}";
-                    }
+            message.Reply(ret);
+            return MarisaPluginTaskState.CompletedTask;
+        }
 
-                    message.Reply(ret);
-                    return MarisaPluginTaskState.CompletedTask;
-                }
+        if (double.TryParse(command, out var expected))
+        {
+            switch (expected)
+            {
                 case > 15:
                 {
                     var result = new List<(double Constant, double Achievement)>();
@@ -1491,7 +1527,7 @@ public partial class MaiMaiDx
 
                     Enumerable.Range(1, 150)
                         .Where(rat =>
-                            SongScore.Ra(100.5, rat / 10.0) >= constant && SongScore.Ra(50, rat / 10.0) <= constant)
+                            SongScore.Ra(100.5, rat / 10.0) >= expected && SongScore.Ra(50, rat / 10.0) <= expected)
                         .ToList()
                         .ForEach(rat =>
                         {
@@ -1501,7 +1537,7 @@ public partial class MaiMaiDx
                                 a = SongScore.NextRa(a, rat / 10.0);
                                 var ra = SongScore.Ra(a, rat / 10.0);
 
-                                if (ra != (int)constant) continue;
+                                if (ra != (int)expected) continue;
 
                                 result.Add((rat / 10.0, a));
                                 break;
@@ -1509,7 +1545,7 @@ public partial class MaiMaiDx
                         });
 
                     ret += string.Join('\n',
-                        result.Select(x => $"{x.Constant:00.0} -> {x.Achievement:000.0000} -> {(int)constant}"));
+                        result.Select(x => $"{x.Constant:00.0} -> {x.Achievement:000.0000} -> {(int)expected}"));
 
                     message.Reply(ret);
                     return MarisaPluginTaskState.CompletedTask;
@@ -1596,8 +1632,6 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
-    [GeneratedRegex(@"^[0-9]+\+?$")]
-    private static partial Regex LvRegex();
 
     #endregion
 }

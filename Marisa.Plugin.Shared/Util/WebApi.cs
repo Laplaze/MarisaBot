@@ -204,6 +204,16 @@ public static class WebApi
         return await RenderUrl("/maimai/difficulty-curve?id=" + songId + (levelIdx == null ? "" : "&idx=" + levelIdx));
     }
 
+    public static async Task<string> MaiMaiDifficultyCurveRank(string kind, string value)
+    {
+        return await RenderUrl($"/maimai/curve-rank?{kind}={Uri.EscapeDataString(value)}");
+    }
+
+    public static async Task<string> MaiMaiDanCourse(string version, string dani)
+    {
+        return await RenderUrl("/maimai/dan-course?ver=" + version + "&dani=" + Uri.EscapeDataString(dani));
+    }
+
     public static async Task<string> OngekiSong(int id)
     {
         return await RenderUrl($"/ongeki/song/{id}");

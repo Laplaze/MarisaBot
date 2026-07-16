@@ -1,37 +1,18 @@
 <template>
-    <div v-if="song && picked" class="mai-curve mai-card relative w-[840px] overflow-hidden antialiased" :style="rootStyle">
-        <div class="absolute inset-0 pointer-events-none stripe-layer"></div>
-        <div class="absolute inset-0 pointer-events-none" :style="glowStyle"></div>
-
-        <div class="relative px-12 pt-9 pb-8">
+    <MaiCardShell v-if="song && picked" class="mai-curve" :bg-key="bgKey" :accent="accent" pad-bottom="pb-8">
             <!-- ── top meta bar ── -->
-            <header class="flex items-center gap-2 flex-nowrap whitespace-nowrap">
-                <img :src="versionLogo" :style="logoStyle" class="h-[50px] shrink-0 drop-shadow-[0_3px_8px_rgba(0,0,0,0.4)]">
-                <div class="flex-1"></div>
-                <img :src="typeBadge" class="h-9 drop-shadow-[0_3px_8px_rgba(0,0,0,0.4)]">
-                <div class="bpm-pill">
-                    <span class="bpm-label">BPM</span>
-                    <span class="bpm-num tabular-nums">{{ song.bpm }}</span>
-                </div>
-                <span class="meta-chip">{{ genreDisplay }}</span>
-                <div class="id-pill tabular-nums">ID {{ songId }}</div>
-            </header>
+            <MaiSongMetaBar :from="song.ver" :type="song.type" :song-id="songId"
+                            :bpm="song.bpm" :genre="song.genre"/>
 
             <!-- ── cover + title ── -->
             <div class="flex items-end gap-5 mt-7">
-                <div class="cover-frame shrink-0">
-                    <img :src="coverSrc" @error="onCoverErr" alt="" class="block w-[112px] h-[112px] object-cover rounded-[14px]">
-                </div>
-                <div class="flex-1 min-w-0 pb-1">
-                    <h1 ref="titleEl" class="mai-title" :style="{ fontSize: titleSize + 'px' }">{{ song.title }}</h1>
-                    <div class="artist-line">{{ song.artist }}</div>
-                </div>
+                <MaiCover :song-id="songId" :size="112" :frame-radius="20" :img-radius="14"/>
+                <MaiSongHeading :title="song.title" :artist="song.artist" :max="64" :min="24" :row-top="0"/>
             </div>
 
-            <!-- ── section tag + difficulty chip ── -->
+            <!-- ── section divider + difficulty chip ── -->
             <div class="flex items-center gap-4 mt-7 mb-4">
-                <span class="section-tag" :style="{ background: diffColor }">难度曲线</span>
-                <span class="font-rodin text-[18px] tracking-[0.28em] text-white/70 whitespace-nowrap">DIFFICULTY CURVE</span>
+                <span class="font-rodin text-[20px] tracking-[0.28em] text-white/70 whitespace-nowrap">DIFFICULTY CURVE</span>
                 <div class="flex-1 h-[2px] rounded-full bg-white/20"></div>
                 <span class="diff-chip font-rodin" :style="{ color: diffColor, borderColor: diffColor }">
                     {{ diffName }} {{ chart.ds.toFixed(1) }}
@@ -66,10 +47,17 @@
                             <line :x1="t.x" :y1="MT" :x2="t.x" :y2="svgH - MB" stroke="#fff" stroke-opacity="0.05"/>
                             <text :x="t.x" :y="svgH - MB + 22" text-anchor="middle" class="tick">{{ t.v }}</text>
                         </g>
+                        <g v-for="mm in minMaxMarks" :key="mm.lbl">
+                            <line :x1="ML" :y1="Y(mm.v)" :x2="SVG_W - MR" :y2="Y(mm.v)"
+                                  :stroke="accent" stroke-opacity="0.35" stroke-dasharray="2 5" stroke-width="1.2"/>
+                            <text :x="SVG_W - MR - 16" :y="Y(mm.v) + mm.dy" text-anchor="end" class="mm-label">
+                                {{ mm.lbl }} {{ mm.v.toFixed(isDsKind ? 2 : 1) }}
+                            </text>
+                        </g>
                         <line :x1="ML" :y1="refY" :x2="SVG_W - MR" :y2="refY"
                               stroke="#fff" :stroke-opacity="isDsKind ? 0.45 : 0.35"
                               stroke-dasharray="7 6" stroke-width="1.5"/>
-                        <text :x="ML + 8" :y="refY - 7">
+                        <text :x="ML + 8" :y="refLabelY">
                             <tspan class="ref">{{ isDsKind ? '官方定数 ' : refLabel }}</tspan>
                             <tspan v-if="isDsKind" class="ref-num">{{ chart.ds.toFixed(1) }}</tspan>
                         </text>
@@ -77,7 +65,7 @@
                               stroke-linejoin="round" stroke-linecap="round"/>
                         <circle :cx="endPt.x" :cy="endPt.y" r="4.5" :fill="accent"/>
                         <circle :cx="endPt.x" :cy="endPt.y" r="8" :fill="accent" opacity="0.25"/>
-                        <text class="axis" text-anchor="middle">
+                        <text v-if="!isDsKind" class="axis" text-anchor="middle">
                             <tspan v-for="(ch, i) in yAxisLabel" :key="i" x="13" :y="yLabelStart + i * 17">{{ ch }}</tspan>
                         </text>
                         <text :x="(ML + SVG_W - MR) / 2" :y="svgH - 2" text-anchor="middle" class="axis-en">DX Rating</text>
@@ -85,15 +73,11 @@
                 </div>
             </div>
 
-            <footer class="mt-5">
-                <div class="foot-note">数据来源：水鱼查分器（diving-fish.com）成绩聚合统计（n={{ chart.n.toLocaleString() }}）</div>
-                <div class="flex items-baseline justify-between gap-4">
-                    <span class="foot-note">曲线为各段位玩家的拟合难度，算法与水鱼拟合定数不同</span>
-                    <span class="footer-text shrink-0">MARISA BOT · DIFFICULTY CURVE</span>
-                </div>
+            <footer class="mt-5 flex items-baseline justify-between gap-6">
+                <div class="foot-note min-w-0 whitespace-nowrap">数据来源：水鱼查分器</div>
+                <span class="footer-text shrink-0">MARISA BOT · DIFFICULTY CURVE</span>
             </footer>
-        </div>
-    </div>
+    </MaiCardShell>
 
     <div v-else-if="noData || song" class="mai-curve mai-card w-[840px] px-12 py-10 antialiased">
         <div class="text-[26px] font-bold">暂无难度曲线数据</div>
@@ -102,14 +86,14 @@
 </template>
 
 <script setup lang="ts">
-import {computed, nextTick, ref, watch} from 'vue'
+import {computed, ref} from 'vue'
 import axios from 'axios'
 import {useRoute} from 'vue-router'
-import {
-    DIFF_NAMES, DIFF_COLORS, genreDisplayOf,
-    VERSION_CODE, LOGO_BBOX_LEFT, versionLogoSrc, typeBadgeSrc,
-    coverSrcOf, COVER_FALLBACK, bgKeyOf, cardBackground,
-} from '@/components/maimai/utils/song_card'
+import {DIFF_NAMES, DIFF_COLORS, bgKeyOf} from '@/components/maimai/utils/song_card'
+import MaiCardShell from '@/components/maimai/MaiCardShell.vue'
+import MaiSongMetaBar from '@/components/maimai/MaiSongMetaBar.vue'
+import MaiSongHeading from '@/components/maimai/MaiSongHeading.vue'
+import MaiCover from '@/components/maimai/MaiCover.vue'
 
 interface Badge {
     label: string; rank: number; of: number; scope: string; basis: string
@@ -165,28 +149,40 @@ const badgeSub = computed(() => {
 // ── 曲线绘制 ──
 const SVG_W = 545, ML = 78, MR = 16, MT = 18, MB = 40
 const svgH = 302
-const X0 = 10200, X1 = 16800
+
+// 横轴按曲线支持范围截取：数据轴修复后支持窗为各谱自身人群的 rating 区间，
+// 高难谱不再有低段假支持，固定全域会留大片空白
+const xDomain = computed<[number, number]>(() => {
+    const c = chart.value.curve
+    return [c[0][0] - 300, c[c.length - 1][0] + 300]
+})
 
 const yDomain = computed<[number, number]>(() => {
     if (!isDsKind.value) return [-6, 106]
     const ys = chart.value.curve.map(p => p[1])
     return [Math.min(...ys, chart.value.ds) - 0.18, Math.max(...ys, chart.value.ds) + 0.18]
 })
-function X(v: number) { return ML + (v - X0) / (X1 - X0) * (SVG_W - ML - MR) }
+function X(v: number) {
+    const [x0, x1] = xDomain.value
+    return ML + (v - x0) / (x1 - x0) * (SVG_W - ML - MR)
+}
 function Y(v: number) {
     const [lo, hi] = yDomain.value
     return MT + (1 - (v - lo) / (hi - lo)) * (svgH - MT - MB)
 }
 
-// Catmull-Rom 平滑（曲线穿过全部数据点，仅显示层）
+// Catmull-Rom 平滑（曲线穿过全部数据点，仅显示层）。控制点 y 钳制在数据极值包络内：
+// 样条在极值附近会过冲、戳出 MAX/MIN 参考线（贝塞尔曲线不出控制点凸包，钳完即不越界）
 const curvePath = computed(() => {
     const pts = chart.value.curve.map(p => ({x: X(p[0]), y: Y(p[1])}))
     if (pts.length < 3) return 'M' + pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L')
+    const yTop = Math.min(...pts.map(p => p.y)), yBot = Math.max(...pts.map(p => p.y))
+    const cy = (v: number) => Math.min(Math.max(v, yTop), yBot)
     let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`
     for (let i = 0; i < pts.length - 1; i++) {
         const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)]
-        d += ` C${(p1.x + (p2.x - p0.x) / 6).toFixed(1)},${(p1.y + (p2.y - p0.y) / 6).toFixed(1)}`
-           + ` ${(p2.x - (p3.x - p1.x) / 6).toFixed(1)},${(p2.y - (p3.y - p1.y) / 6).toFixed(1)}`
+        d += ` C${(p1.x + (p2.x - p0.x) / 6).toFixed(1)},${cy(p1.y + (p2.y - p0.y) / 6).toFixed(1)}`
+           + ` ${(p2.x - (p3.x - p1.x) / 6).toFixed(1)},${cy(p2.y - (p3.y - p1.y) / 6).toFixed(1)}`
            + ` ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`
     }
     return d
@@ -202,6 +198,15 @@ const endPt = computed(() => {
     return {x: X(p[0]), y: Y(p[1])}
 })
 
+// 最大/最小参考线（QingQiz 建议）：标签分别外扩到线上方/下方，曲线扁平时也不互撞
+const minMaxMarks = computed(() => {
+    const ys = chart.value.curve.map(p => p[1])
+    return [
+        {lbl: 'MAX', v: Math.max(...ys), dy: -6},
+        {lbl: 'MIN', v: Math.min(...ys), dy: 14},
+    ]
+})
+
 const yTicks = computed(() => {
     if (!isDsKind.value) return [0, 25, 50, 75, 100].map(v => ({v, y: Y(v), label: String(v)}))
     const [lo, hi] = yDomain.value
@@ -210,73 +215,41 @@ const yTicks = computed(() => {
     return out
 })
 const xTicks = computed(() => {
+    const [x0, x1] = xDomain.value
+    const step = x1 - x0 <= 3200 ? 500 : 1000
     const out = []
-    for (let v = 11000; v <= 16000; v += 1000) out.push({v, x: X(v)})
+    for (let v = Math.ceil(x0 / step) * step; v <= x1; v += step) out.push({v, x: X(v)})
     return out
 })
 const refY = computed(() => isDsKind.value ? Y(chart.value.ds) : Y(50))
+// 参考线标签放线上还是线下：取标签 x 跨度内曲线离两个候选位置更远的一侧（End Time 这类
+// 曲线贴着参考线走的谱，固定放线上会被整段盖住）
+const refLabelY = computed(() => {
+    const above = refY.value - 7, below = refY.value + 16
+    const pts = chart.value.curve
+        .map(p => ({x: X(p[0]), y: Y(p[1])}))
+        .filter(p => p.x <= ML + 190)
+    if (!pts.length) return above
+    const clearance = (baseline: number) => Math.min(...pts.map(p => Math.abs(p.y - (baseline - 5))))
+    return clearance(above) >= clearance(below) ? above : below
+})
 const refLabel = computed(() => isDsKind.value ? `官方定数 ${chart.value.ds.toFixed(1)}` : '同等级中位')
-const yAxisLabel = computed(() => isDsKind.value ? '拟合定数' : '同等级难度百分位')
+// 百分位模式坐标轴含义不自明，保留竖排说明；拟合定数模式删（QingQiz 反馈）
+const yAxisLabel = computed(() => '同等级难度百分位')
 // y 轴标签竖排、绘图区垂直居中
 const yLabelStart = computed(() => {
     const mid = (MT + svgH - MB) / 2
     return mid - (yAxisLabel.value.length - 1) * 17 / 2 + 5
 })
 
-// ── 头部素材（同 MaiSongScore） ──
-const typeBadge = computed(() => typeBadgeSrc(song.value?.type))
-const coverSrc = ref('')
-watch(song, s => { if (s) coverSrc.value = coverSrcOf(songId) }, {immediate: true})
-function onCoverErr() { coverSrc.value = COVER_FALLBACK }
-const genreDisplay = computed(() => genreDisplayOf(song.value?.genre))
-const versionLogo = computed(() => versionLogoSrc(song.value?.ver))
-const logoStyle = computed(() => {
-    const code = VERSION_CODE[song.value?.ver ?? '']
-    const trim = code ? (LOGO_BBOX_LEFT[code] ?? 0) * (60 / 160) : 0
-    return {marginLeft: `${(-trim).toFixed(1)}px`}
-})
-
-const rootStyle = computed(() => cardBackground(bgKeyOf(chart.value?.li ?? 3, false)))
-const glowStyle = computed(() => ({
-    background: `radial-gradient(720px 520px at 18% 8%, ${accent.value}2e 0%, transparent 70%),
-                 radial-gradient(560px 480px at 92% 4%, ${accent.value}1c 0%, transparent 70%)`,
-}))
-
-const TITLE_MAX = 64, TITLE_MIN = 24
-const titleEl = ref<HTMLElement | null>(null)
-const titleSize = ref(TITLE_MAX)
-watch(song, async () => {
-    if (!song.value) return
-    titleSize.value = TITLE_MAX
-    await nextTick()
-    try { await (document as any).fonts.ready } catch { /* ignore */ }
-    const el = titleEl.value
-    for (let p = 0; el && p < 5 && el.scrollWidth > el.clientWidth; p++) {
-        titleSize.value = Math.max(TITLE_MIN, Math.floor(titleSize.value * el.clientWidth / el.scrollWidth) - 1)
-        await nextTick()
-    }
-}, {flush: 'post'})
+const bgKey = computed(() => bgKeyOf(chart.value?.li ?? 3, false))
 </script>
 
 <style scoped lang="postcss" src="@/assets/css/maimai/song_card.pcss"/>
 
 <style scoped lang="postcss">
-.stripe-layer { background: repeating-linear-gradient(-38deg, rgba(255,255,255,0.025) 0 3px, transparent 3px 26px); }
 
-.id-pill, .bpm-pill { font-family: 'Torus', sans-serif; color: #fff; background: var(--pill-bg); border-radius: 9999px; box-shadow: var(--pill-shadow); }
-.id-pill { font-weight: bold; font-size: 16px; letter-spacing: 0.06em; padding: 3px 12px; }
-.bpm-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; }
-.bpm-label { font-weight: bold; font-size: 12px; letter-spacing: 0.1em; color: rgba(255,255,255,0.55); }
-.bpm-num { font-weight: bold; font-size: 16px; }
-.meta-chip { font-family: 'SEGA NewRodin','LXGW WenKai',sans-serif; font-weight: bold; font-size: 14px; color: var(--chip-ink); padding: 4px 12px; border-radius: 9999px; background: var(--chip-bg); box-shadow: var(--chip-ring); white-space: nowrap; }
-
-.cover-frame { padding: 5px; border-radius: 20px; background: rgba(255,255,255,0.78); box-shadow: 0 0 0 1px rgba(255,255,255,0.8), 0 8px 20px -12px rgba(0,0,0,0.5); }
-.artist-line { font-family: 'Torus','SEGA Maru Gothic','LXGW WenKai',sans-serif; font-size: 19px; font-weight: bold; color: rgba(255,255,255,0.8); margin-top: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.section-tag { font-family: 'Microsoft YaHei',sans-serif; font-weight: bold; font-size: 21px; letter-spacing: 0.1em; border-radius: 9999px; padding: 4px 20px; color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.8); white-space: nowrap; }
 .diff-chip { font-size: 17px; font-weight: 900; padding: 3px 14px; border: 2px solid; border-radius: 9999px; background: rgba(8,8,16,0.4); white-space: nowrap; }
-.footer-text { font-family: 'Torus',sans-serif; font-weight: bold; font-size: 12px; letter-spacing: 0.4em; color: rgba(255,255,255,0.45); }
-.foot-note { font-family: 'Torus','Microsoft YaHei',sans-serif; font-weight: bold; font-size: 12px; letter-spacing: 0.02em; color: rgba(255,255,255,0.45); }
 
 .stat { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; padding: 10px 14px; text-align: center; }
 .stat-k { font-family: 'Microsoft YaHei',sans-serif; font-size: 13px; color: rgba(255,255,255,0.6); }
@@ -289,6 +262,7 @@ watch(song, async () => {
 .axis { fill: #fff; fill-opacity: 0.4; font-size: 12px; font-family: 'Microsoft YaHei',sans-serif; }
 .axis-en { fill: #fff; fill-opacity: 0.45; font-size: 13px; font-weight: bold; font-family: 'Torus',sans-serif; letter-spacing: 0.08em; }
 .ref { fill: #fff; fill-opacity: 0.6; font-size: 12.5px; font-family: 'Microsoft YaHei',sans-serif; }
+.mm-label { fill: #fff; fill-opacity: 0.55; font-size: 11px; font-weight: bold; font-family: 'Torus',sans-serif; letter-spacing: 0.05em; }
 .ref-num { fill: #fff; fill-opacity: 0.6; font-size: 13px; font-weight: bold; font-family: 'Torus',sans-serif; }
 .tabular-nums { font-variant-numeric: tabular-nums; }
 </style>

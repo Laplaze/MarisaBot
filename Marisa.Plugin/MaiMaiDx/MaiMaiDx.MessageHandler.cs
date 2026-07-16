@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -10,6 +10,7 @@ using Marisa.Plugin.Shared.Lxns;
 using Marisa.Plugin.Shared.MaiMaiDx;
 using Marisa.Plugin.Shared.MaiMaiDx.DataFetcher;
 using Marisa.Plugin.Shared.Util;
+using Marisa.Plugin.Shared.Util.Cacheable;
 using Marisa.Plugin.Shared.Util.SongDb;
 
 namespace Marisa.Plugin.MaiMaiDx;
@@ -422,11 +423,10 @@ public partial class MaiMaiDx
             announced = true;
         }
 
-        // 第一阶段：轮询 login-status 等 JWT 下发，直到拿到 token / 失败 / 超时。
+        // 第一阶段：轮询登录任务等 JWT 下发，直到拿到 token / 失败 / 超时。
         // MSH 繁忙时 send_request 阶段排队可达数分钟，故总超时放宽到 15 分钟。
-        // 注意只轮询到拿到 token 为止：login-status 在抓分（update_score）期间每次调用都伴随
-        // 数据库写入与 JWT 签发，持续轮询会撞上服务端 30 秒以上的响应停滞（实测连续超时），
-        // MSH 自家前端同样在拿到 token 后就不再调用该接口
+        // 新版任务模型中登录任务只负责建立好友关系，JWT 在好友关系确认（任务 completed）时下发，
+        // 抓分由第二阶段单独创建的 update_score 任务完成
         MaiScoreHubClient.LoginStatusResult? status = null;
         var waitStart      = DateTime.UtcNow;
         var deadline       = waitStart.AddMinutes(15);
@@ -484,7 +484,7 @@ public partial class MaiMaiDx
             return;
         }
 
-        // 实测 JWT 在 update_score（抓分开始）阶段即随 login-status 下发；login-request 的 authToken 仅作回退
+        // JWT 随登录任务完成（好友关系确认）下发；创建登录任务时的 authToken 仅作回退
         var jwt = !string.IsNullOrEmpty(status.Token) ? status.Token! : login.AuthToken;
         if (string.IsNullOrEmpty(jwt))
         {
@@ -500,52 +500,58 @@ public partial class MaiMaiDx
             retryHint = "重试「mai 导」即可。"; // 令牌已存入 MSH，后续失败无需再带令牌重发
         }
 
-        // 第二阶段：抓分仍在进行则改用轻量的 GET /job/{id} 等任务完成——
-        // 抓分记录在 status 变为 completed 之后才落库，过早导出会推送旧记录或报 Sync not found
-        if (!status.Done)
+        // 第二阶段：创建独立的抓分任务并等待完成。登录任务不再包含抓分，把登录任务号作为
+        // 好友关系凭证传入可立即开始抓分。抓分阶段单独计时：第一阶段需等待好友申请送达并被
+        // 接受，繁忙时可能已耗去大部分时间，共用截止时间会使抓分预算所剩无几
+        string crawlJobId;
+        try
         {
-            // 抓分阶段单独计时：第一阶段需等待好友申请送达并被接受，MSH 机器人账号繁忙时好友申请
-            // 的发出会排队数分钟，可能已耗去第一阶段的大部分时间；若与抓分共用同一截止时间，抓分等待
-            // 会因预算所剩无几而超时。此处好友申请已被接受，仅需等待服务端抓分（其自带 30 分钟硬上限）
-            deadline = DateTime.UtcNow.AddMinutes(20);
-            var crawlStart = DateTime.UtcNow;
+            crawlJobId = await msh.CreateUpdateScoreJobAsync(jwt, login.JobId);
+        }
+        catch (Exception e)
+        {
+            ReplyAt(message, $"同步失败：创建抓分任务未成功（{e.Message}）。{retryHint}");
+            return;
+        }
 
-            var crawlDone = false;
-            while (DateTime.UtcNow < deadline)
+        deadline = DateTime.UtcNow.AddMinutes(20);
+        var crawlStart = DateTime.UtcNow;
+
+        var crawlDone = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(PollDelayMs(DateTime.UtcNow - crawlStart));
+
+            MaiScoreHubClient.JobResult job;
+            try
             {
-                await Task.Delay(PollDelayMs(DateTime.UtcNow - crawlStart));
-
-                MaiScoreHubClient.JobResult job;
-                try
-                {
-                    job          = await msh.GetJobAsync(login.JobId);
-                    pollFailures = 0;
-                }
-                catch (Exception e)
-                {
-                    if (++pollFailures < 6) continue;
-                    ReplyAt(message, $"同步中断：连续多次查询任务状态失败（{e.Message}）。稍后{retryHint}");
-                    return;
-                }
-
-                if (job.Status == "completed")
-                {
-                    crawlDone = true;
-                    break;
-                }
-
-                if (job.Status is "failed" or "canceled")
-                {
-                    ReplyAt(message, $"同步失败：{job.Error ?? job.Status}。{retryHint}");
-                    return;
-                }
+                job          = await msh.GetJobAsync(jwt, crawlJobId);
+                pollFailures = 0;
             }
-
-            if (!crawlDone)
+            catch (Exception e)
             {
-                ReplyAt(message, $"等待超时（服务繁忙，成绩抓取未在限定时间内完成）。稍后{retryHint}");
+                if (++pollFailures < 6) continue;
+                ReplyAt(message, $"同步中断：连续多次查询任务状态失败（{e.Message}）。稍后{retryHint}");
                 return;
             }
+
+            if (job.Status == "completed")
+            {
+                crawlDone = true;
+                break;
+            }
+
+            if (job.Status is "failed" or "canceled")
+            {
+                ReplyAt(message, $"同步失败：{job.Error ?? job.Status}。{retryHint}");
+                return;
+            }
+        }
+
+        if (!crawlDone)
+        {
+            ReplyAt(message, $"等待超时（服务繁忙，成绩抓取未在限定时间内完成）。稍后{retryHint}");
+            return;
         }
 
         // 查询 MSH 中已配置的查分器
@@ -567,14 +573,8 @@ public partial class MaiMaiDx
             var name = p == "lxns" ? "落雪" : "水鱼";
             try
             {
+                // 导出为异步任务，ExportAsync 内部轮询至终态后返回该查分器的回执
                 var r = await msh.ExportAsync(jwt, p);
-
-                // 抓分记录在任务 completed 之后才异步落库，导出可能恰好跑在落库之前，稍候重试
-                for (var retry = 0; retry < 5 && !r.Success && r.Message == "Sync not found"; retry++)
-                {
-                    await Task.Delay(3000);
-                    r = await msh.ExportAsync(jwt, p);
-                }
 
                 sb.AppendLine(r.Success ? $"{name} ✅ 导入 {r.Exported}/{r.Scores} 条" : $"{name} ❌ {r.Message ?? "失败"}");
             }
@@ -709,7 +709,7 @@ public partial class MaiMaiDx
     /// <summary>
     ///     单曲各难度成绩
     /// </summary>
-    [MarisaPluginDoc("查询某首歌各个难度的个人成绩", "`歌曲名` 或 `歌曲别名` 或 `歌曲id` 或表达式（例如`const>10`）")]
+    [MarisaPluginDoc("查询某首歌各个难度的个人成绩", "`歌曲名` 或 `歌曲别名` 或 `歌曲id`")]
     [MarisaPluginCommand("info", "信息")]
     private async Task<MarisaPluginTaskState> SongInfo(Message message)
     {
@@ -723,22 +723,86 @@ public partial class MaiMaiDx
     }
 
     /// <summary>
+    ///     谱面预览
+    /// </summary>
+    [MarisaPluginDoc("谱面预览，回复在线播放页链接", "可选难度（如`白谱`，曲名前后皆可）+ `歌曲名` 或 `歌曲别名` 或 `歌曲id`")]
+    [MarisaPluginCommand("chart", "谱面", "预览", "preview")]
+    private async Task<MarisaPluginTaskState> SongChartPreview(Message message)
+    {
+        var command = message.Command.Trim();
+
+        var searchResult = SongDb.SearchSong(command);
+
+        int? levelIdx = null;
+        if (searchResult.Count == 0 && PlateData.TryStripDifficultyAffix(command, out var idx, out var rest))
+        {
+            var stripped = SongDb.SearchSong(rest);
+            if (stripped.Count != 0)
+            {
+                levelIdx     = idx;
+                searchResult = stripped;
+            }
+        }
+
+        var song = await SongDb.MultiPageSelectResult(searchResult, message, false, true);
+        if (song == null) return MarisaPluginTaskState.CompletedTask;
+
+        if (levelIdx >= song.Levels.Count)
+        {
+            message.Reply($"该谱面没有 {MaiMaiSong.LevelNameAll[levelIdx.Value]} 难度");
+            return MarisaPluginTaskState.CompletedTask;
+        }
+
+        var url = $"{ShortUrlStore.GetPublicBaseUrl()}/maimai/chart?id={song.Id}" +
+                  (levelIdx == null ? "" : $"&difficulty={levelIdx}");
+        message.Reply($"[{song.Type}] {song.Title}\n{url}");
+
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>
     ///     拟合难度曲线
     /// </summary>
-    [MarisaPluginDoc("查询谱面的拟合难度曲线", "可选难度前缀（如`白谱`）+ `歌曲名` 或 `歌曲别名` 或 `歌曲id` 或表达式（例如`const>10`）")]
+    [MarisaPluginDoc("查询谱面的拟合难度曲线", "可选难度（如`白谱`，曲名前后皆可）+ `歌曲名` 或 `歌曲别名` 或 `歌曲id`")]
     [MarisaPluginCommand("curve", "曲线")]
     private async Task<MarisaPluginTaskState> SongDifficultyCurve(Message message)
     {
         var command = message.Command.Trim();
 
-        int? levelIdx = null;
-        if (PlateData.TryStripDifficultyPrefix(command, out var idx, out var rest))
+        // 排名查询的英文别名（lv/base 等）不注册为子命令：命令匹配是裸前缀，会吞掉这些字母
+        // 开头的歌名查询。改为验证门禁——别名后跟合法等级/定数才当排名，否则整串按歌名处理
+        (string Alias, bool IsLevel)[] rankAliases = [("level", true), ("lv", true), ("base", false), ("b", false)];
+        foreach (var (alias, isLevel) in rankAliases)
         {
-            levelIdx = idx;
-            command  = rest;
+            if (!command.Span.StartsWith(alias, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var value = command[alias.Length..].Trim().ToString();
+            if (isLevel && TryParseLevel(value, out var level))
+            {
+                return ReplyDifficultyCurveRank(message, "level", level);
+            }
+            if (!isLevel && TryParseConstant(value, out var constant))
+            {
+                return ReplyDifficultyCurveRank(message, "ds", constant.ToString("0.0"));
+            }
         }
 
-        var song = await SongDb.MultiPageSelectResult(SongDb.SearchSong(command), message, false, true);
+        // 整串优先：完整输入能搜到歌就按纯歌名处理（保护「白金ディスコ」这类以色字开头的
+        // 歌名），无结果时再尝试剥离句首/句尾的难度字段重搜
+        var searchResult = SongDb.SearchSong(command);
+
+        int? levelIdx = null;
+        if (searchResult.Count == 0 && PlateData.TryStripDifficultyAffix(command, out var idx, out var rest))
+        {
+            var stripped = SongDb.SearchSong(rest);
+            if (stripped.Count != 0)
+            {
+                levelIdx     = idx;
+                searchResult = stripped;
+            }
+        }
+
+        var song = await SongDb.MultiPageSelectResult(searchResult, message, false, true);
         if (song == null) return MarisaPluginTaskState.CompletedTask;
 
         if (levelIdx >= song.Charts.Count)
@@ -752,10 +816,69 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
+    /// <summary>排名图与玩家无关、只随曲线数据变化：按（查询, 数据版本哈希）落盘缓存，
+    /// 数据随前端更新后旧文件名失效（同 MaiMaiSong.GetImage 的带哈希缓存惯例）。</summary>
+    private static MarisaPluginTaskState ReplyDifficultyCurveRank(Message message, string kind, string value)
+    {
+        var path = Path.Join(ResourceManager.TempPath, $"CurveRank.{kind}.{value}.{CurveDataHash.Value}.b64");
+        message.Reply(MessageDataImage.FromBase64(new CacheableText(path,
+            () => WebApi.MaiMaiDifficultyCurveRank(kind, value).Result).Value));
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    [MarisaPluginDoc("某等级全部谱面的拟合难度排名", "`等级`（如`13+`；别名`lv`）")]
+    [MarisaPluginSubCommand(nameof(SongDifficultyCurve))]
+    [MarisaPluginCommand("等级")]
+    private static MarisaPluginTaskState SongDifficultyCurveRankByLevel(Message message)
+    {
+        if (TryParseLevel(message.Command.Trim().ToString(), out var level))
+        {
+            return ReplyDifficultyCurveRank(message, "level", level);
+        }
+
+        message.Reply("等级应为 1-15，可带加号（如13+）");
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    [MarisaPluginDoc("某定数全部谱面的拟合难度排名", "`定数`（如`14.7`；别名`base`）")]
+    [MarisaPluginSubCommand(nameof(SongDifficultyCurve))]
+    [MarisaPluginCommand("定数")]
+    private static MarisaPluginTaskState SongDifficultyCurveRankByConstant(Message message)
+    {
+        if (TryParseConstant(message.Command.Trim().ToString(), out var constant))
+        {
+            return ReplyDifficultyCurveRank(message, "ds", constant.ToString("0.0"));
+        }
+
+        message.Reply("定数应为 1.0-15.0（如14.7）");
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
+    /// <summary>
+    ///     段位認定曲目表
+    /// </summary>
+    [MarisaPluginDoc("查询段位认定的曲目与判定规则", "可选`版本`（缺省国服现行）+ `段位名`，如：`prism 十段`")]
+    [MarisaPluginCommand("dan", "段位表", "段位")]
+    private static MarisaPluginTaskState DanCourse(Message message)
+    {
+        if (!DanData.TryParse(message.Command.ToString(), out var version, out var dani, out var error))
+        {
+            message.Reply(error!);
+            return MarisaPluginTaskState.CompletedTask;
+        }
+
+        // 卡片内容全静态，渲染结果按（版本, 段位, 数据指纹）落盘缓存
+        var cache = Path.Join(ResourceManager.TempPath, $"DanCourse.{version}.{dani}.{DanData.DataHash}.b64");
+        message.Reply(MessageDataImage.FromBase64(
+            new CacheableText(cache, () => WebApi.MaiMaiDanCourse(version, dani).Result).Value));
+
+        return MarisaPluginTaskState.CompletedTask;
+    }
+
     /// <summary>
     ///     单曲可解锁称号
     /// </summary>
-    [MarisaPluginDoc("查询某首歌可解锁的游戏内称号", "`歌曲名` 或 `歌曲别名` 或 `歌曲id` 或表达式（例如`const>10`）")]
+    [MarisaPluginDoc("查询某首歌可解锁的游戏内称号", "`歌曲名` 或 `歌曲别名` 或 `歌曲id`")]
     [MarisaPluginCommand("称号", "title")]
     private async Task<MarisaPluginTaskState> SongTitles(Message message)
     {
@@ -1129,49 +1252,25 @@ public partial class MaiMaiDx
     [MarisaPluginCommand("level", "lv")]
     private async Task<MarisaPluginTaskState> SummaryLevel(Message message)
     {
-        var lv = message.Command.Trim();
-
-        if (LvRegex().IsMatch(lv.ToString()))
+        if (!TryParseLevel(message.Command.Trim().ToString(), out var level))
         {
-            var maxLv = lv.Span[^1] == '+' ? 14 : 15;
-            var lvNr  = lv.Span[^1] == '+' ? lv[..^1] : lv;
-
-            if (int.TryParse(lvNr.Span, out var i))
-            {
-                if (!(1 <= i && i <= maxLv))
-                {
-                    goto _error;
-                }
-            }
-            else
-            {
-                goto _error;
-            }
-        }
-        else
-        {
-            goto _error;
+            message.Reply("错误的命令格式");
+            return MarisaPluginTaskState.CompletedTask;
         }
 
-            var fetcher = GetDataFetcher(message);
-            var scores  = await fetcher.GetScores(message);
+        var fetcher = GetDataFetcher(message);
+        var scores  = await fetcher.GetScores(message);
 
         var groupedSong = SongDb.SongList
             .Select(song => song.Constants
                 .Select((constant, i) => (constant, i, song)))
             .SelectMany(s => s)
-            .Where(data => data.song.Levels[data.i].Equals(lv, StringComparison.Ordinal))
+            .Where(data => data.song.Levels[data.i].Equals(level, StringComparison.Ordinal))
             .OrderByDescending(x => x.constant)
             .GroupBy(x => x.constant.ToString("F1"));
 
-        var im = await MaiMaiDraw.DrawGroupedSong(groupedSong, scores, lv.ToString());
-            message.Reply(MessageDataImage.FromBase64(im));
-
-        return MarisaPluginTaskState.CompletedTask;
-
-        // 集中处理错误
-        _error:
-        message.Reply("错误的命令格式");
+        var im = await MaiMaiDraw.DrawGroupedSong(groupedSong, scores, level);
+        message.Reply(MessageDataImage.FromBase64(im));
 
         return MarisaPluginTaskState.CompletedTask;
     }
@@ -1282,6 +1381,7 @@ public partial class MaiMaiDx
                 .SelectMany(song => song.Constants.Select((constant, i) => (constant, i, song)))
                 .Where(t => levelIdxes.Contains(t.i))
                 .Where(t => q.Selectors.All(sel => MatchSelector(sel, t.constant, t.i, t.song, includeRevival)))
+                .Where(t => !PlateData.IsPlateExcludedSong(q, t.song))
                 .Select(t => (t.constant, t.i, t.song))
                 .ToList();
         }
@@ -1435,25 +1535,29 @@ public partial class MaiMaiDx
     [MarisaPluginCommand("line", "分数线")]
     private static MarisaPluginTaskState RatingLine(Message message)
     {
-        if (double.TryParse(message.Command.Span, out var constant))
+        var command = message.Command.Trim().ToString();
+
+        // 定数分支走严格解析（一位小数，拒符号/千分位/NaN），预期 rating 分支照旧
+        if (TryParseConstant(command, out var constant))
         {
-            switch (constant)
+            var a   = 96.9999;
+            var ret = "达成率 -> Rating";
+
+            while (a < 100.5)
             {
-                case <= 15.0 and >= 1:
-                {
-                    var a   = 96.9999;
-                    var ret = "达成率 -> Rating";
+                a = SongScore.NextRa(a, constant);
+                var ra = SongScore.Ra(a, constant);
+                ret = $"{ret}\n{a:000.0000} -> {ra}";
+            }
 
-                    while (a < 100.5)
-                    {
-                        a = SongScore.NextRa(a, constant);
-                        var ra = SongScore.Ra(a, constant);
-                        ret = $"{ret}\n{a:000.0000} -> {ra}";
-                    }
+            message.Reply(ret);
+            return MarisaPluginTaskState.CompletedTask;
+        }
 
-                    message.Reply(ret);
-                    return MarisaPluginTaskState.CompletedTask;
-                }
+        if (double.TryParse(command, out var expected))
+        {
+            switch (expected)
+            {
                 case > 15:
                 {
                     var result = new List<(double Constant, double Achievement)>();
@@ -1461,7 +1565,7 @@ public partial class MaiMaiDx
 
                     Enumerable.Range(1, 150)
                         .Where(rat =>
-                            SongScore.Ra(100.5, rat / 10.0) >= constant && SongScore.Ra(50, rat / 10.0) <= constant)
+                            SongScore.Ra(100.5, rat / 10.0) >= expected && SongScore.Ra(50, rat / 10.0) <= expected)
                         .ToList()
                         .ForEach(rat =>
                         {
@@ -1471,7 +1575,7 @@ public partial class MaiMaiDx
                                 a = SongScore.NextRa(a, rat / 10.0);
                                 var ra = SongScore.Ra(a, rat / 10.0);
 
-                                if (ra != (int)constant) continue;
+                                if (ra != (int)expected) continue;
 
                                 result.Add((rat / 10.0, a));
                                 break;
@@ -1479,7 +1583,7 @@ public partial class MaiMaiDx
                         });
 
                     ret += string.Join('\n',
-                        result.Select(x => $"{x.Constant:00.0} -> {x.Achievement:000.0000} -> {(int)constant}"));
+                        result.Select(x => $"{x.Constant:00.0} -> {x.Achievement:000.0000} -> {(int)expected}"));
 
                     message.Reply(ret);
                     return MarisaPluginTaskState.CompletedTask;
@@ -1566,8 +1670,6 @@ public partial class MaiMaiDx
         return MarisaPluginTaskState.CompletedTask;
     }
 
-    [GeneratedRegex(@"^[0-9]+\+?$")]
-    private static partial Regex LvRegex();
 
     #endregion
 }

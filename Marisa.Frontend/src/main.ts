@@ -24,6 +24,12 @@ import OpVersion from "@/components/chunithm/op/OpVersion.vue";
 import {default as ChunithmPreview} from "@/components/chunithm/Preview.vue";
 import ChunithmSong from "@/components/chunithm/ChunithmSong.vue";
 import MaiSong from "@/components/maimai/MaiSong.vue";
+import MaiSongScore from "@/components/maimai/MaiSongScore.vue";
+import MaiSongTitles from "@/components/maimai/MaiSongTitles.vue";
+import MaiDifficultyCurve from "@/components/maimai/MaiDifficultyCurve.vue";
+import MaiChartPreview from "@/components/maimai/MaiChartPreview.vue";
+import MaiCurveRank from "@/components/maimai/MaiCurveRank.vue";
+import MaiDanCourse from "@/components/maimai/MaiDanCourse.vue";
 
 
 const routes = [
@@ -33,6 +39,12 @@ const routes = [
     {path: '/maimai/recommend', component: Recommend},
     {path: '/maimai/summary', component: MaiMaiSummary},
     {path: '/maimai/song', component: MaiSong},
+    {path: '/maimai/song-score', component: MaiSongScore},
+    {path: '/maimai/song-titles', component: MaiSongTitles},
+    {path: '/maimai/difficulty-curve', component: MaiDifficultyCurve},
+    {path: '/maimai/chart', component: MaiChartPreview},
+    {path: '/maimai/curve-rank', component: MaiCurveRank},
+    {path: '/maimai/dan-course', component: MaiDanCourse},
     {path: '/chunithm/best', component: ChuBestScores},
     {path: '/chunithm/summary', component: ChunithmSummary},
     {path: '/chunithm/overpower', component: OverPowerAll},

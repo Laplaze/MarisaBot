@@ -40,6 +40,10 @@ axios.all([
 
 const allCharts = computed(() => grouped.value.flatMap(g => g.x))
 
+// 游戏内成就姓名框（「樱将完成表」这类查询才有；无对应姓名框时 null，布局回落纯文本标题）
+const nameplateSrc = computed(() =>
+    plate.value?.NamePlateImg ? `/assets/maimai/pic/plate/${plate.value.NamePlateImg}` : null)
+
 // 标题真实测宽 auto-shrink：从 TITLE_MAX 起，按 scrollWidth/clientWidth 迭代缩到塞进 title
 // 弹性槽（title-row 1250px − stats-bar 720px − gap 30px ≈ 500px）。短标题保持 MAX、不再像按
 // 字符数估算那样把西文/短标题过度缩小留出空隙；长标题缩到刚好填满，与右侧 stats-bar 之间不留缝。
@@ -113,7 +117,7 @@ function getBorder(score: Score | undefined): string | null {
 function getMarker(score: Score, maxDx: number = 0): string | null {
     if (!plate.value) return null
     switch (plate.value.Dim) {
-        case 'Achievement': return `/assets/maimai/pic/rank_${score.rate}.png`
+        case 'Achievement': return `/assets/maimai/pic/rank_summary_${score.rate}.png`
         case 'Fc':          return score.fc ? `/assets/maimai/pic/icon_${score.fc}.png` : null
         case 'Fs': {
             if (!score.fs) return null
@@ -173,7 +177,7 @@ function groupMinRank(g: GroupedSong): string | null {
         if (sc.achievements < minA) minA = sc.achievements
     }
     if (!isFinite(minA)) return null
-    return `/assets/maimai/pic/rank_${calcRank(minA)}.png`
+    return `/assets/maimai/pic/rank_summary_${calcRank(minA)}.png`
 }
 
 function formatAch(a: number): {intPart: string, fracPart: string} {
@@ -190,6 +194,9 @@ function formatAch(a: number): {intPart: string, fracPart: string} {
         <div class="title-row">
             <span class="title" ref="titleEl" :style="{fontSize: titleSize + 'px'}">{{ title }}</span>
             <StatsBar :charts="allCharts" :scores="scores" :detail="true" :plate="plate" class="title-stats"/>
+        </div>
+        <div v-if="nameplateSrc" class="nameplate-row">
+            <img :src="nameplateSrc" alt=""/>
         </div>
         <div class="groups">
             <div class="group" v-for="g in grouped" :key="g.Key">
@@ -216,7 +223,7 @@ function formatAch(a: number): {intPart: string, fracPart: string} {
                             <!-- sum mode: 底部成绩 + 中心 rank（带边框） -->
                             <template v-else-if="!plate && score">
                                 <img v-if="getBorder(score)" :src="getBorder(score)!" class="border-img" alt=""/>
-                                <img :src="`/assets/maimai/pic/rank_${score.rate}.png`" class="sum-rank" alt=""/>
+                                <img :src="`/assets/maimai/pic/rank_summary_${score.rate}.png`" class="sum-rank" alt=""/>
                                 <div class="achievement-bar" :style="{color: fcColor(score.fc)}">
                                     <span class="ach-text"><span class="ach-int">{{ formatAch(score.achievements).intPart }}</span><span class="ach-frac">{{ formatAch(score.achievements).fracPart }}</span></span>
                                 </div>

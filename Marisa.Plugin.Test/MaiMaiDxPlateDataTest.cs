@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Dynamic;
 using System.Linq;
@@ -654,25 +655,25 @@ public class MaiMaiDxPlateDataTest
     [Test]
     public void ParsesLevelLabel()
     {
-        // "14+神完成表" → Selector.Level("14+") + Fc=AP + 默认难度 [3, 4]
+        // "14+神完成表" → Selector.Level("14+") + Fc=AP + 指定等级 → 全难度 [0,1,2,3,4]
         var q = MustParse("14+神完成表");
         Assert.That(q.Selectors.Single(), Is.InstanceOf<PlateData.Selector.Level>());
         Assert.That(((PlateData.Selector.Level)q.Selectors.Single()).Label, Is.EqualTo("14+"));
         Assert.That(q.Threshold.Dim, Is.EqualTo(PlateData.Dimension.Fc));
         Assert.That(q.Threshold.Level, Is.EqualTo(3));
-        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3, 4}));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));
     }
 
     [Test]
     public void ParsesConstant()
     {
-        // "14.9FDX完成表" → Selector.Constant(14.9) + Fs=FDX + 默认难度 [3, 4]
+        // "14.9FDX完成表" → Selector.Constant(14.9) + Fs=FDX + 指定定数 → 全难度 [0,1,2,3,4]
         var q = MustParse("14.9FDX完成表");
         Assert.That(q.Selectors.Single(), Is.InstanceOf<PlateData.Selector.Constant>());
         Assert.That(((PlateData.Selector.Constant)q.Selectors.Single()).Value, Is.EqualTo(14.9).Within(0.001));
         Assert.That(q.Threshold.Dim, Is.EqualTo(PlateData.Dimension.Fs));
         Assert.That(q.Threshold.Level, Is.EqualTo(4));
-        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3, 4}));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -682,12 +683,22 @@ public class MaiMaiDxPlateDataTest
     [Test]
     public void MultiSelector_PlateAndLevel()
     {
-        // "镜代13+AP完成表" → Plate(镜) ∩ Level("13+") + Fc=AP
+        // "镜代13+AP完成表" → Plate(镜) ∩ Level("13+") + Fc=AP；指定等级 → 全难度 [0,1,2,3,4]
         var q = MustParse("镜代13+AP完成表");
         Assert.That(q.Selectors, Has.Exactly(2).Items);
         Assert.That(q.Selectors.OfType<PlateData.Selector.Plate>().Single().Kanji, Is.EqualTo("镜"));
         Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("13+"));
         Assert.That(q.Threshold.DisplayName, Is.EqualTo("AP"));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));
+    }
+
+    [Test]
+    public void MultiSelector_PlateLevelExplicitDifficulty()
+    {
+        // 显式写难度时以难度 token 为准：镜代 紫谱(MASTER) 13+ → 仅 [MASTER]，覆盖「含等级 → 全难度」默认
+        var q = MustParse("镜代紫谱13+完成表");
+        Assert.That(q.Selectors.OfType<PlateData.Selector.Plate>().Single().Kanji, Is.EqualTo("镜"));
+        Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("13+"));
         Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3}));
     }
 
@@ -706,13 +717,13 @@ public class MaiMaiDxPlateDataTest
     [Test]
     public void MultiSelector_PlateAndConstant()
     {
-        // "镜代14.6神完成表" → Plate(镜) ∩ Constant(14.6) + AP
+        // "镜代14.6神完成表" → Plate(镜) ∩ Constant(14.6) + AP；指定定数 → 全难度 [0,1,2,3,4]
         var q = MustParse("镜代14.6神完成表");
         Assert.That(q.Selectors, Has.Exactly(2).Items);
         Assert.That(q.Selectors.OfType<PlateData.Selector.Plate>().Single().Kanji, Is.EqualTo("镜"));
         Assert.That(q.Selectors.OfType<PlateData.Selector.Constant>().Single().Value, Is.EqualTo(14.6).Within(0.001));
         Assert.That(q.Threshold.DisplayName, Is.EqualTo("AP"));
-        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3}));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));
     }
 
     [Test]
@@ -744,7 +755,7 @@ public class MaiMaiDxPlateDataTest
         Assert.That(q.Selectors.OfType<PlateData.Selector.Plate>().Single().Kanji, Is.EqualTo("镜"));
         Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("13+"));
         Assert.That(q.Selectors.OfType<PlateData.Selector.Genre>().Single().FullName, Is.EqualTo("niconico & VOCALOID"));
-        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3}));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));   // 含 Level → 全难度
     }
 
     [TestCase("镜代13+AP完成表")]
@@ -760,7 +771,7 @@ public class MaiMaiDxPlateDataTest
         Assert.That(q.Selectors.OfType<PlateData.Selector.Plate>().Single().Kanji, Is.EqualTo("镜"));
         Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("13+"));
         Assert.That(q.Threshold.DisplayName, Is.EqualTo("AP"));
-        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3}));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));   // 含 Level → 全难度
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -873,14 +884,14 @@ public class MaiMaiDxPlateDataTest
     [Test]
     public void DxScoreStar_WithLevel_MultiSelector()
     {
-        // multi-selector: Plate(镜) ∩ Level("14+") + DxScore=5
+        // multi-selector: Plate(镜) ∩ Level("14+") + DxScore=5；指定等级 → 全难度 [0,1,2,3,4]
         var q = MustParse("镜代14+5星完成表");
         Assert.That(q.Selectors, Has.Exactly(2).Items);
         Assert.That(q.Selectors.OfType<PlateData.Selector.Plate>().Single().Kanji, Is.EqualTo("镜"));
         Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("14+"));
         Assert.That(q.Threshold.Dim, Is.EqualTo(PlateData.Dimension.DxScore));
         Assert.That(q.Threshold.Level, Is.EqualTo(5));
-        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {3}));
+        Assert.That(q.LevelIdxes, Is.EquivalentTo(new[] {0, 1, 2, 3, 4}));
     }
 
     [Test]
@@ -1144,13 +1155,210 @@ public class MaiMaiDxPlateDataTest
         Assert.That(((PlateData.Selector.Charter)q.Selectors.Single()).Name, Is.EqualTo("群青リコリス"));
     }
 
-    [Test]
-    public void CharterAlterEgoMapResolvesShisui()
+    // ──────────────────────────────────────────────────────────────────────
+    // 谱师身份并集（CharterIdentityMap + MatchCharter）：精确输入某身份名时按人级并集匹配，
+    // 使真名查询与别名查询同集。解析层不感知（selector 类型不变）。
+    // ──────────────────────────────────────────────────────────────────────
+
+    // 同一人的不同身份互相带出（含合作署名）；大小写不敏感。
+    [TestCase("The ALiEN",  "隅田川星人",     true)]
+    [TestCase("The ALiEN",  "隅田川華火大会", true)]
+    [TestCase("the alien",  "隅田川星人",     true)]
+    [TestCase("隅田川星人", "The ALiEN",      true)]
+    [TestCase("隅田川星人", "The ALiEN vs. Phoenix", true)]
+    [TestCase("翠楼屋",     "翡翠マナ",       true)]
+    [TestCase("翡翠マナ",   "翠楼屋",         true)]
+    [TestCase("Phoenix",    "小鳥遊さん",     true)]
+    [TestCase("BELiZHEL",   "Luxizhel",       true)]
+    [TestCase("ロシェ＠ペンギン", "ロシェ@ペンギン", true)]           // 全角＠身份（实际署名写法），与半角同人
+    [TestCase("チャン@DP皆伝", "舞舞10年ズ ～ファイナル～", true)]   // 短子串「舞舞10年ズ」覆盖两种合作署名
+    [TestCase("はっぴー",       "舞舞10年ズ ～ファイナル～", true)]
+    // 合作名义不是身份：精确打合作名义仍只查该署名。
+    [TestCase("七味星人",   "隅田川星人",     false)]
+    [TestCase("七味星人",   "超七味星人",     true)]  // substring 命中，非身份并集
+    // 非身份输入退化为单一 substring。
+    [TestCase("Jack",       "Jack & Licorice Gunjyo", true)]
+    [TestCase("Jack",       "隅田川星人",     false)]
+    public void MatchCharterUnifiesIdentitiesOfSamePerson(string input, string signed, bool expected)
     {
-        // 打本名「翠楼屋」时 handler 会并查马甲「翡翠マナ」（匹配层）；解析层仍是普通 Charter。
-        Assert.That(PlateData.CharterAlterEgos("翠楼屋"), Has.Member("翡翠マナ"));
-        Assert.That(PlateData.CharterAlterEgos("Jack"), Is.Empty);
+        Assert.That(PlateData.MatchCharter(signed, input), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void MatchCharterAppliesExcludeToIdentityQueries()
+    {
+        // 「サファ太 respects for 小鳥遊さん」是 サファ太 的致敬独谱：身份查询（小鳥遊/Phoenix）要剔除，
+        // 但按 サファ太 身份查询要命中。
+        const string respects = "サファ太 respects for 小鳥遊さん";
+        Assert.That(PlateData.MatchCharter(respects, "小鳥遊"),  Is.False);
+        Assert.That(PlateData.MatchCharter(respects, "Phoenix"), Is.False);
+        Assert.That(PlateData.MatchCharter(respects, "サファ太"), Is.True);
+    }
+
+    [Test]
+    public void CharterIdentityMapIsConsistent()
+    {
+        // 每个身份名必须与其名义组相关（身份是某名义的 substring 或反之），防止身份挂错组。
+        foreach (var (identity, (names, _)) in PlateData.CharterIdentityMap)
+        {
+            Assert.That(names.Any(n =>
+                    n.Contains(identity, StringComparison.OrdinalIgnoreCase)
+                    || identity.Contains(n, StringComparison.OrdinalIgnoreCase)),
+                Is.True, $"身份「{identity}」与其名义组无关联");
+        }
+    }
+
+    [Test]
+    public void IdentityQueryKeepsCharterSelectorType()
+    {
+        // 身份并集只在匹配层生效，解析层契约不变：真名输入仍是普通 Charter selector。
         var q = MustParse("翠楼屋将完成表");
         Assert.That(q.Selectors.Single(), Is.InstanceOf<PlateData.Selector.Charter>());
+    }
+
+    // 别名/定数 token 嵌在真名里时不参与竞争：与等级组合的真名查询不被切开（否则静默丢同人署名）。
+    [TestCase("隅田川星人14完成表", "隅田川星人")] // 「隅田川星人」内嵌别名 key「隅田川」
+    [TestCase("7.3Hz 14完成表",     "7.3Hz")]     // 「7.3Hz」内嵌别名/定数同形 token「7.3」
+    public void IdentityNameEmbeddingAliasKeySurvivesComboQuery(string raw, string charter)
+    {
+        var q = MustParse(raw);
+        Assert.That(q.Selectors.OfType<PlateData.Selector.Charter>().Single().Name, Is.EqualTo(charter));
+        Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("14"));
+    }
+
+    [Test]
+    public void AliasComboWithLevelStillParsesAsAlias()
+    {
+        // 别名不嵌在任何真名里时，组合查询照常走别名（回归）。
+        var q = MustParse("川哥14完成表");
+        Assert.That(q.Selectors.OfType<PlateData.Selector.CharterAlias>().Single().Input, Is.EqualTo("川哥"));
+        Assert.That(q.Selectors.OfType<PlateData.Selector.Level>().Single().Label, Is.EqualTo("14"));
+    }
+
+    // ---- 游戏内成就姓名框贴图映射 ----
+
+    [TestCase("樱将完成表", "UI_Plate_006125.png")]    // 简体代字同样命中
+    [TestCase("櫻将完成表", "UI_Plate_006125.png")]
+    [TestCase("櫻SSS完成表", "UI_Plate_006125.png")]   // 按 (Dim, Level) 判，不看用户敲的别名
+    [TestCase("超极完成表", "UI_Plate_006104.png")]
+    [TestCase("真极完成表", "UI_Plate_006101.png")]    // 真系只占 6101-6103 三号
+    [TestCase("真神完成表", "UI_Plate_006102.png")]
+    [TestCase("真舞舞完成表", "UI_Plate_006103.png")]
+    [TestCase("霸者完成表", "UI_Plate_006148.png")]    // 固有阈值 A
+    [TestCase("舞舞舞完成表", "UI_Plate_006152.png")]  // 舞系 + 舞舞
+    [TestCase("熊极完成表", "UI_Plate_055101.png")]    // DX 时代块内后四位是 5101（编号体系例外）
+    [TestCase("熊舞舞完成表", "UI_Plate_055104.png")]
+    [TestCase("华神完成表", "UI_Plate_109103.png")]
+    [TestCase("镜将完成表", "UI_Plate_559102.png")]
+    [TestCase("彩将完成表", "UI_Plate_609102.png")]
+    [TestCase("彩舞舞完成表", "UI_Plate_609104.png")]
+    public void NamePlateImageResolves(string raw, string expected)
+    {
+        Assert.That(PlateData.NamePlateImage(MustParse(raw)), Is.EqualTo(expected));
+    }
+
+    [TestCase("真将完成表")]      // 真系历来无「将」
+    [TestCase("樱大将完成表")]    // 大将(SSS+)没有对应姓名框
+    [TestCase("霸者神完成表")]    // 覆盖固有阈值后不再是「霸者」姓名框
+    [TestCase("镜代V家将完成表")] // 多 selector 不出牌
+    [TestCase("翠楼屋将完成表")]  // 非版本代字查询
+    public void NamePlateImageAbsent(string raw)
+    {
+        Assert.That(PlateData.NamePlateImage(MustParse(raw)), Is.Null);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // ジングルベル(SD, 70)：圣诞期间限定出身，游戏内三个真牌（真極/真神/真舞舞）的
+    // 条件历来不含它；真将不存在、舞/霸者与其余查询照常计入。
+    // ──────────────────────────────────────────────────────────────────────
+
+    [TestCase("真极完成表")]
+    [TestCase("真神完成表")]
+    [TestCase("真舞舞完成表")]
+    [TestCase("真极红谱完成表")]  // 显示牌子的难度子视图同样排除
+    public void JingleBellExcludedFromRealShinPlates(string raw)
+    {
+        Assert.That(PlateData.IsPlateExcludedSong(MustParse(raw), CreateSong(70, "maimai")), Is.True);
+    }
+
+    [TestCase("真将完成表")]   // 真将不是真实存在的牌子
+    [TestCase("真完成表")]     // 默认阈值=将
+    [TestCase("舞极完成表")]   // 舞系计入
+    [TestCase("舞舞舞完成表")]
+    [TestCase("霸者完成表")]
+    public void JingleBellKeptOutsideRealShinPlates(string raw)
+    {
+        Assert.That(PlateData.IsPlateExcludedSong(MustParse(raw), CreateSong(70, "maimai")), Is.False);
+    }
+
+    [Test]
+    public void ShinPlateExclusionOnlyTargetsJingleBell()
+    {
+        Assert.That(PlateData.IsPlateExcludedSong(MustParse("真极完成表"), CreateSong(17, "maimai")), Is.False);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 难度别名剥离（curve 等按曲命令的可选难度字段，句首/句尾均可、空格可省略）。
+    // 纯语法层测试：「白金ディスコ」这类以色字开头的真实歌名由调用方保护——handler
+    // 整串优先搜歌，仅无结果时才用剥离结果重搜。
+    // ──────────────────────────────────────────────────────────────────────
+
+    [TestCase("白谱 系ぎて",       4, "系ぎて")]
+    [TestCase("系ぎて 白谱",       4, "系ぎて")]  // 难度字段可在曲名后
+    [TestCase("系ぎて白谱",        4, "系ぎて")]
+    [TestCase("紫谱潘",            3, "潘")]      // 空格可省略
+    [TestCase("紫潘",              3, "潘")]      // 单字色名免空格
+    [TestCase("潘紫",              3, "潘")]
+    [TestCase("红谱11663",         2, "11663")]   // 歌曲 id 同样可接
+    [TestCase("11663 红谱",        2, "11663")]
+    [TestCase("mst 潘",            3, "潘")]      // 大小写不敏感
+    [TestCase("MAS潘",             3, "潘")]      // 社区惯用缩写；最长优先保证不抢 MASTER
+    [TestCase("Re:MASTER 系ぎて",  4, "系ぎて")]
+    [TestCase("潘 remas",          4, "潘")]      // 免冒号缩写，后缀同样可用
+    [TestCase("ReMASTER系ぎて",    4, "系ぎて")]
+    [TestCase("EXP1",              2, "1")]       // ASCII token 后随数字满足词边界
+    [TestCase("白金ディスコ",      4, "金ディスコ")] // 语法层会剥；整串优先搜歌保证实际按歌名处理
+    public void DifficultyAffixStrips(string input, int idx, string rest)
+    {
+        var ok = PlateData.TryStripDifficultyAffix(input.AsMemory(), out var levelIdx, out var remaining);
+        Assert.That(ok, Is.True);
+        Assert.That(levelIdx, Is.EqualTo(idx));
+        Assert.That(remaining.ToString(), Is.EqualTo(rest));
+    }
+
+    [TestCase("MASTERPIECE")]  // ASCII token 后随字母不算前缀
+    [TestCase("TRUEMASTER")]   // 句尾 token 前是字母同样不算
+    [TestCase("紫谱")]         // 剥离后为空：整串按歌名
+    [TestCase("白")]
+    [TestCase("系ぎて")]
+    public void DifficultyAffixLeavesSongQueryIntact(string input)
+    {
+        var ok = PlateData.TryStripDifficultyAffix(input.AsMemory(), out _, out var remaining);
+        Assert.That(ok, Is.False);
+        Assert.That(remaining.ToString(), Is.EqualTo(input));
+    }
+
+    // 宽松变体（容错率对话等无歌名混杂的上下文）：单字免空格、接受首字母、剩余可为空。
+    [TestCase("紫100.5",        3, "100.5")]
+    [TestCase("m100",           3, "100")]
+    [TestCase("r99.5",          4, "99.5")]
+    [TestCase("MAS100",         3, "100")]
+    [TestCase("Re:Master 100",  4, "100")]
+    [TestCase("绿谱100",        0, "100")]
+    [TestCase("master",         3, "")]     // 剩余为空由达成率解析处理
+    public void LooseDifficultyPrefixStrips(string input, int idx, string rest)
+    {
+        var ok = PlateData.TryStripDifficultyPrefixLoose(input.AsMemory(), out var levelIdx, out var remaining);
+        Assert.That(ok, Is.True);
+        Assert.That(levelIdx, Is.EqualTo(idx));
+        Assert.That(remaining.ToString(), Is.EqualTo(rest));
+    }
+
+    [TestCase("100.5")]
+    [TestCase("x100")]
+    [TestCase("")]
+    public void LooseDifficultyPrefixRejectsNonDifficulty(string input)
+    {
+        Assert.That(PlateData.TryStripDifficultyPrefixLoose(input.AsMemory(), out _, out _), Is.False);
     }
 }

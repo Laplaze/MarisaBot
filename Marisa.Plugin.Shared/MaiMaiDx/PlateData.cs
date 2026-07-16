@@ -76,8 +76,6 @@ public static class PlateData
 
     /// <summary>
     ///     完整查询：一组 Selectors（AND 合取——所有 selector 都命中的 chart 才入选）+ 阈值 + 难度。
-    ///     当前 TryParse 阶段返回 Selectors.Count == 1（与历史单 selector 行为等价）；
-    ///     multi-selector 解析在后续 commit 启用。
     /// </summary>
     public sealed record Query(IReadOnlyList<Selector> Selectors, Threshold Threshold, IReadOnlyList<int> LevelIdxes);
 
@@ -293,6 +291,18 @@ public static class PlateData
     public static bool IsRevivalSong(long songId) => RevivalSongIds.Contains(songId);
 
     /// <summary>
+    ///     ジングルベル(SD, 70)出身是圣诞期间限定（ORANGE PLUS 起才常驻），游戏内三个真牌
+    ///     （真極/真神/真舞舞）的条件历来不含它；舞/霸者则计入。仅当查询就是显示真实牌子的
+    ///     真代完成表（<see cref="NamePlateImage"/> 命中）时整曲排除。
+    /// </summary>
+    private const long JingleBellSdSongId = 70;
+
+    public static bool IsPlateExcludedSong(Query query, MaiMaiSong song) =>
+        song.Id == JingleBellSdSongId
+        && query.Selectors is [Selector.Plate { Kanji: "真" }]
+        && NamePlateImage(query) != null;
+
+    /// <summary>
     ///     代字 → diving-fish 版本字符串集合。
     ///     繁简体差异（暁/晓 櫻/樱 菫/堇 輝/辉 華/华 鏡/镜）双向都收录指向同一个版本集合。
     ///     真：两个 from 字段都查（旧版 PLUS 在 diving-fish 是独立条目）。
@@ -345,6 +355,61 @@ public static class PlateData
         ["霸者"] = new(Dimension.Achievement, 5, "A"),
     };
 
+    /// <summary>
+    ///     游戏内成就姓名框贴图：版本代字 → 该版「極」牌贴图 id。極/将/神/舞舞 为连续 4 号。
+    ///     真系历来无「将」且只占 6101-6103 三号，在 <see cref="NamePlateImage"/> 里单独处理。
+    /// </summary>
+    private static readonly Dictionary<string, int> NamePlateKiwamiId = new()
+    {
+        ["超"] = 6104, ["檄"] = 6108, ["橙"] = 6112, ["暁"] = 6116, ["晓"] = 6116,
+        ["桃"] = 6120, ["櫻"] = 6124, ["樱"] = 6124, ["紫"] = 6128, ["菫"] = 6132, ["堇"] = 6132,
+        ["白"] = 6136, ["雪"] = 6140, ["輝"] = 6144, ["辉"] = 6144, ["舞"] = 6149,
+        ["熊"] = 55101, ["華"] = 109101, ["华"] = 109101, ["爽"] = 159101, ["煌"] = 209101,
+        ["宙"] = 259101, ["星"] = 309101, ["祭"] = 359101, ["祝"] = 409101,
+        ["双"] = 459101, ["宴"] = 509101, ["鏡"] = 559101, ["镜"] = 559101, ["彩"] = 609101,
+    };
+
+    /// <summary>
+    ///     查询对应的游戏内姓名框贴图文件名；无对应姓名框时为 null。
+    ///     仅当查询恰为「单个版本代字 + 極/将/神/舞舞 之一的阈值」时命中；霸者用其固有阈值（A）。
+    /// </summary>
+    public static string? NamePlateImage(Query query)
+    {
+        if (query.Selectors is not [Selector.Plate plate]) return null;
+
+        var (dim, level) = (query.Threshold.Dim, query.Threshold.Level);
+
+        if (plate.Kanji == "霸者")
+        {
+            return dim == Dimension.Achievement && level == 5 ? PlateImageName(6148) : null;
+        }
+
+        var offset = (dim, level) switch
+        {
+            (Dimension.Fc, 1)           => 0, // 極 = FC
+            (Dimension.Achievement, 12) => 1, // 将 = SSS
+            (Dimension.Fc, 3)           => 2, // 神 = AP
+            (Dimension.Fs, 4)           => 3, // 舞舞 = FDX
+            _                           => -1,
+        };
+        if (offset < 0) return null;
+
+        if (plate.Kanji == "真")
+        {
+            return offset switch
+            {
+                0 => PlateImageName(6101),
+                2 => PlateImageName(6102),
+                3 => PlateImageName(6103),
+                _ => null,
+            };
+        }
+
+        return NamePlateKiwamiId.TryGetValue(plate.Kanji, out var kiwami) ? PlateImageName(kiwami + offset) : null;
+    }
+
+    private static string PlateImageName(int id) => $"UI_Plate_{id:D6}.png";
+
     public static bool MatchPlate(Selector.Plate plate, MaiMaiSong song, int levelIdx, bool includeRevival = false)
     {
         if (!plate.Versions.Any(v => string.Equals(v, song.Version, StringComparison.OrdinalIgnoreCase)))
@@ -396,7 +461,7 @@ public static class PlateData
     /// </summary>
     public static readonly Dictionary<string, string[]> CharterAliasMap = new()
     {
-        ["哈皮"]       = ["はっぴー", "緑風 犬三郎", "原田ひろゆき", "シチミッピー", "鳩ホルぴー", "いぬっくまとボコっくま", "たかなっぴー", "Luxiいぬ", "“H”ack", "“H”ack underground", "PANDORA PARADOXXX", "Sukiyaki vs Happy"],
+        ["哈皮"]       = ["はっぴー", "緑風 犬三郎", "原田ひろゆき", "シチミッピー", "鳩ホルぴー", "いぬっくまとボコっくま", "たかなっぴー", "Luxiいぬ", "“H”ack", "“H”ack underground", "PANDORA PARADOXXX", "Sukiyaki vs Happy", "舞舞10年ズ"],
         ["沙发太"]     = ["サファ太", "さふぁた", "Safari", "-ZONE- SaFaRi", "-ZONE-Phoenix", "Safata", "ボコ太", "鳩サファzhel", "サぴぴぴぴちネファ太太太太コ", "ﾚよ†ょ／∪ヽ”┠  (十,3､了ﾅﾆ", "PANDORA BOXXX", "Ruby", "project raputa", "Safazhel"],
         ["maistar"]    = ["mai-Star"],
         ["小鸟游"]     = ["小鳥遊", "Phoenix", "たかなっぴー", "Anomaly Labyrinth", "ネコトリサーカス団"],
@@ -415,7 +480,7 @@ public static class PlateData
         ["桃子猫"]     = ["ぴちネコ", "ロシアンブラック", "BLaCK rOSE dIsEASe pATiENT", "サぴぴぴぴちネファ太太太太コ", "チェシャ猫とハートのジャック", "SHICHIMI☆CAT", "ネコトリサーカス団", "R-blacX of JacQ", "SAFARi☆CAT"],
         ["阿玛莉莉丝"] = ["アマリリス"],
         ["柠檬"]       = ["じゃこレモン", "僕の檸檬本当上手"],
-        ["DP皆传"]     = ["チャン@DP皆伝", "Garakuta Scramble!", "舞舞10年ズ（チャンとはっぴー）"],
+        ["DP皆传"]     = ["チャン@DP皆伝", "Garakuta Scramble!", "舞舞10年ズ"],
         ["科技厨房"]   = ["Techno Kitchen"],
         ["Revo"]       = ["Revo@LC"],
         ["蟹棒君"]     = ["カマボコ", "ボコ太", "いぬっくまとボコっくま"],
@@ -439,16 +504,59 @@ public static class PlateData
     };
 
     /// <summary>
-    ///     可直接打出的谱师本名 → 其高难马甲等额外 substring。命中本名（精确 Charter）时一并匹配马甲，
-    ///     无需把本名设成别名（设成别名会改变其 selector 类型、撞坏既有用例）。
+    ///     谱师身份名（本名/独立马甲）→ 该谱师全部名义 + 反向排除，仅匹配层使用（解析层不感知）。
+    ///     合作名义（七味星人、鳩サファzhel 等）不收——精确打合作名义仍只查该署名。
     /// </summary>
-    public static readonly Dictionary<string, string[]> CharterAlterEgoMap = new()
-    {
-        ["翠楼屋"] = ["翡翠マナ"],
-    };
+    public static readonly Dictionary<string, (string[] Names, string[] Exclude)> CharterIdentityMap = BuildCharterIdentityMap();
 
-    public static IEnumerable<string> CharterAlterEgos(string charterName) =>
-        CharterAlterEgoMap.TryGetValue(charterName, out var egos) ? egos : [];
+    private static Dictionary<string, (string[] Names, string[] Exclude)> BuildCharterIdentityMap()
+    {
+        // (别名 key, 身份名列表)。无中文别名的谱师（翠楼屋），名义组即身份列表。
+        (string AliasKey, string[] Identities)[] groups =
+        [
+            ("哈皮",     ["はっぴー", "緑風 犬三郎", "原田ひろゆき", "“H”ack", "“H”ack underground", "PANDORA PARADOXXX"]),
+            ("沙发太",   ["サファ太", "さふぁた", "Safari", "-ZONE- SaFaRi", "Safata", "PANDORA BOXXX", "Ruby", "project raputa"]),
+            ("小鸟游",   ["小鳥遊", "小鳥遊さん", "Phoenix", "Anomaly Labyrinth"]),
+            ("鸠",       ["鳩ホルダー", "The Dove"]),
+            ("企鹅",     ["ペンギン", "ロシェ@ペンギン", "ロシェ＠ペンギン"]),
+            ("泸溪河",   ["Luxizhel", "BELiZHEL"]),
+            ("7.3",      ["シチミヘルツ", "7.3Hz", "7.3GHz"]),
+            ("隅田川",   ["隅田川星人", "The ALiEN"]),
+            ("华火职人", ["華火職人", "“Carpe diem” ＊ HAN∀BI"]),
+            ("桃子猫",   ["ぴちネコ", "ロシアンブラック", "BLaCK rOSE dIsEASe pATiENT"]),
+            ("柠檬",     ["じゃこレモン", "僕の檸檬本当上手"]),
+            ("DP皆传",   ["チャン@DP皆伝", "Garakuta Scramble!"]),
+            ("蟹棒君",   ["カマボコ", "カマボコ君"]),
+            ("寿喜烧",   ["すきやき", "すきやき奉行"]),
+            ("红箭",     ["Redarrow"]),
+            ("甜口姜",   ["あまくちジンジャー", "EL DiABLO"]),
+            ("melonpop", ["メロンポップ", "ずんだポップ"]),
+            ("翠楼屋",   ["翠楼屋", "翡翠マナ"]),
+        ];
+
+        var map = new Dictionary<string, (string[], string[])>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (aliasKey, identities) in groups)
+        {
+            var names   = CharterAliasMap.GetValueOrDefault(aliasKey) ?? identities;
+            var exclude = CharterAliasExclude.GetValueOrDefault(aliasKey, []);
+            foreach (var identity in identities) map.Add(identity, (names, exclude));
+        }
+        return map;
+    }
+
+    /// <summary>
+    ///     精确 Charter 的匹配谓词：输入恰为某身份名（忽略大小写）时按该人全部名义并集（含反向排除）匹配，
+    ///     使真名查询与别名查询结果一致；否则单一 substring（兼容 "サファ太 vs 翠楼屋" 这种合作署名）。
+    /// </summary>
+    public static bool MatchCharter(string signedCharter, string input) =>
+        CharterIdentityMap.TryGetValue(input, out var person)
+            ? MatchCharter(signedCharter, person.Names, person.Exclude)
+            : signedCharter.Contains(input, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>名义组 OR 命中且不落 Exclude。CharterAlias selector 与身份查询共用。</summary>
+    public static bool MatchCharter(string signedCharter, IReadOnlyList<string> names, IReadOnlyList<string> exclude) =>
+        names.Any(n => signedCharter.Contains(n, StringComparison.OrdinalIgnoreCase))
+        && !exclude.Any(x => signedCharter.Contains(x, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     ///     阈值表。第一项是用户输入的字符串（中文别名 + ASCII rank/fc/fs 缩写），第二项是阈值定义。
@@ -516,7 +624,8 @@ public static class PlateData
 
     /// <summary>
     ///     难度别名表。**故意不收单字**（绿/黄/红/紫/白），因为这些字跟代字（紫=MURASAKi、白=MiLK）
-    ///     或者用户预期的别名会冲突。要写中文必须双字"绿谱/黄谱/红谱/紫谱/白谱"。
+    ///     或者用户预期的别名会冲突。要写中文必须双字"绿谱/黄谱/红谱/紫谱/白谱"
+    ///     （单字色名仅 <see cref="TryStripDifficultyAffix"/> 在句首/句尾剥离时接受）。
     ///     Re:MASTER 是合法的 difficulty（用户显式指定时才走），但不是所有歌都有该难度。
     /// </summary>
     public static readonly Dictionary<string, int> DifficultyAliasMap = new(StringComparer.OrdinalIgnoreCase)
@@ -524,13 +633,129 @@ public static class PlateData
         ["BASIC"]     = 0, ["BSC"] = 0, ["绿谱"] = 0,
         ["ADVANCED"]  = 1, ["ADV"] = 1, ["黄谱"] = 1,
         ["EXPERT"]    = 2, ["EXP"] = 2, ["红谱"] = 2,
-        ["MASTER"]    = 3, ["MST"] = 3, ["紫谱"] = 3,
-        ["Re:MASTER"] = 4, ["白谱"] = 4,
+        ["MASTER"]    = 3, ["MST"] = 3, ["MAS"] = 3, ["紫谱"] = 3,
+        ["Re:MASTER"] = 4, ["ReMASTER"] = 4, ["ReMAS"] = 4, ["白谱"] = 4,
     };
 
     private static readonly (string Token, int LevelIdx)[] DifficultyEntriesLongestFirst =
         DifficultyAliasMap.Select(kv => (kv.Key, kv.Value))
             .OrderByDescending(t => t.Key.Length).ToArray();
+
+    /// <summary>单字色名（仅句首/句尾剥离接受）。不进 <see cref="DifficultyAliasMap"/>：完成表的
+    /// anywhere 匹配下单字与版本代字冲突（紫=MURASAKi、白=MiLK）。</summary>
+    private static readonly (char Color, int LevelIdx)[] SingleColorEntries =
+        [('绿', 0), ('黄', 1), ('红', 2), ('紫', 3), ('白', 4)];
+
+    /// <summary>
+    ///     从查询串句首或句尾剥离难度别名（「白谱 歌名」「歌名 白谱」「紫歌名」「歌名紫」，
+    ///     空格均可省略）。纯语法层，不判断剩余部分像不像歌名——调用方须整串优先：先按完整
+    ///     输入搜歌，无结果时才用剥离结果重搜（「白金ディスコ」这类以色字开头的歌名靠整串
+    ///     匹配保护）。含 ASCII 字母的 token 保留词边界规则（紧邻字符不能是 ASCII 字母，
+    ///     防止吞掉 MASTERPIECE 这类歌名）；剥离后剩余部分为空时不算匹配。
+    /// </summary>
+    public static bool TryStripDifficultyAffix(ReadOnlyMemory<char> input, out int levelIdx, out ReadOnlyMemory<char> rest)
+    {
+        levelIdx = -1;
+        rest     = input;
+
+        // 整串恰为难度词（「紫谱」单独出现）不算查询，防单字路径把「谱」当歌名
+        if (DifficultyAliasMap.ContainsKey(input.ToString())) return false;
+
+        foreach (var (token, idx) in DifficultyEntriesLongestFirst)
+        {
+            if (input.Length <= token.Length) continue;
+
+            var needBoundary = token.Any(IsAsciiLetter);
+
+            if (input.Span.StartsWith(token, StringComparison.OrdinalIgnoreCase)
+                && !(needBoundary && IsAsciiLetter(input.Span[token.Length])))
+            {
+                var remaining = input[token.Length..].Trim();
+                if (!remaining.IsEmpty)
+                {
+                    levelIdx = idx;
+                    rest     = remaining;
+                    return true;
+                }
+            }
+
+            if (input.Span.EndsWith(token, StringComparison.OrdinalIgnoreCase)
+                && !(needBoundary && IsAsciiLetter(input.Span[input.Length - token.Length - 1])))
+            {
+                var remaining = input[..^token.Length].Trim();
+                if (!remaining.IsEmpty)
+                {
+                    levelIdx = idx;
+                    rest     = remaining;
+                    return true;
+                }
+            }
+        }
+
+        foreach (var (color, idx) in SingleColorEntries)
+        {
+            if (input.Length < 2) break;
+
+            if (input.Span[0] == color)
+            {
+                var remaining = input[1..].Trim();
+                if (!remaining.IsEmpty)
+                {
+                    levelIdx = idx;
+                    rest     = remaining;
+                    return true;
+                }
+            }
+
+            if (input.Span[^1] == color)
+            {
+                var remaining = input[..^1].Trim();
+                if (!remaining.IsEmpty)
+                {
+                    levelIdx = idx;
+                    rest     = remaining;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    ///     对话上下文（消息内无歌名混杂，如容错率的难度询问）的宽松难度前缀：
+    ///     词表同 <see cref="TryStripDifficultyAffix"/> 但仅句首匹配，额外接受难度全名
+    ///     首字母（B/A/E/M/R），且剩余部分可为空。
+    /// </summary>
+    public static bool TryStripDifficultyPrefixLoose(ReadOnlyMemory<char> input, out int levelIdx, out ReadOnlyMemory<char> rest)
+    {
+        foreach (var (token, idx) in DifficultyEntriesLongestFirst)
+        {
+            if (!input.Span.StartsWith(token, StringComparison.OrdinalIgnoreCase)) continue;
+            if (token.Any(IsAsciiLetter) && input.Length > token.Length && IsAsciiLetter(input.Span[token.Length])) continue;
+
+            levelIdx = idx;
+            rest     = input[token.Length..].Trim();
+            return true;
+        }
+
+        if (!input.IsEmpty)
+        {
+            var head = input.Span[0];
+            var ci   = Array.FindIndex(SingleColorEntries, e => e.Color == head);
+
+            levelIdx = ci >= 0 ? SingleColorEntries[ci].LevelIdx : "BAEMR".IndexOf(char.ToUpperInvariant(head));
+            if (levelIdx >= 0)
+            {
+                rest = input[1..].Trim();
+                return true;
+            }
+        }
+
+        levelIdx = -1;
+        rest     = input;
+        return false;
+    }
 
     /// <summary>
     ///     解析完整命令字符串（剥过 plugin 前缀后的部分）。
@@ -637,7 +862,7 @@ public static class PlateData
             }
             else if (pErr != null)
             {
-                error = pErr;       // 丸/彩 这种已知不支持，立刻返回
+                error = pErr;       // 丸 这种已知不支持，立刻返回
                 return false;
             }
 
@@ -649,13 +874,17 @@ public static class PlateData
 
             // 谱师别名作为一等 token，且在 Constant 之前检查：多字别名「华火职人」靠长度压过单字代字「华」，
             // 同长度同位置时（「7.3」vs 定数 7.3）按先检查者胜出 → 别名优先。
-            if (TryFindRightmostCharterAliasInString(workingPart, out var caStart, out var caLen, out var caSel))
+            // 别名/定数 token 嵌在 workingPart 内出现的某个真谱师名/身份名里时（如「隅田川星人 13」
+            // 的「隅田川」）不参与竞争：让等级等 token 先剥，真名整段落到 precise Charter。
+            if (TryFindRightmostCharterAliasInString(workingPart, out var caStart, out var caLen, out var caSel)
+                && !TokenEmbeddedInCharterName(workingPart, caStart, caLen, knownCharters))
             {
                 if (caLen > matchLen || (caLen == matchLen && caStart > matchStart))
                 { matchStart = caStart; matchLen = caLen; matched = caSel; }
             }
 
-            if (TryFindRightmostConstantInString(workingPart, out var cStart, out var cLen, out var cSel))
+            if (TryFindRightmostConstantInString(workingPart, out var cStart, out var cLen, out var cSel)
+                && !TokenEmbeddedInCharterName(workingPart, cStart, cLen, knownCharters))
             {
                 if (cLen > matchLen || (cLen == matchLen && cStart > matchStart))
                 { matchStart = cStart; matchLen = cLen; matched = cSel; }
@@ -741,7 +970,13 @@ public static class PlateData
 
         if (diffAt < 0)
         {
-            if (selectors.Any(s => s is Selector.Revival))
+            if (selectors.Any(s => s is Selector.Level or Selector.Constant))
+            {
+                // 指定了等级/定数：该等级/定数的谱面可能分布在任意难度（如 6+ 只在 BASIC/ADVANCED，
+                // 13+ 在 EXPERT/MASTER/Re:MASTER），全难度都查——此时版本代字的「仅 MASTER」默认不适用。
+                levelIdxes = [0, 1, 2, 3, 4];
+            }
+            else if (selectors.Any(s => s is Selector.Revival))
             {
                 // 复活曲按类别处理：默认 MASTER + Re:MASTER（即便同时带版本代字也不用版本牌的单 MASTER 默认）。
                 levelIdxes = DefaultLevelIdxes;
@@ -864,6 +1099,18 @@ public static class PlateData
     }
 
     private static bool IsAsciiLetter(char c) => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z';
+
+    /// <summary>候选 token 区间被 workingPart 内出现的某个更长真谱师名/身份名覆盖时，它是名字的一部分而非 selector。</summary>
+    private static bool TokenEmbeddedInCharterName(
+        string s, int start, int length, IReadOnlyCollection<string> knownCharters)
+    {
+        return knownCharters.Concat(CharterIdentityMap.Keys).Any(name =>
+        {
+            if (name.Length <= length) return false;
+            var i = s.IndexOf(name, Math.Max(0, start + length - name.Length), StringComparison.OrdinalIgnoreCase);
+            return i >= 0 && i <= start;
+        });
+    }
 
     /// <summary>
     ///     精确 charter 匹配：当且仅当 selectorPart 是某个已知 charter 名的 substring 时命中。

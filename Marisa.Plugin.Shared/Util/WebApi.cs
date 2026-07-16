@@ -189,6 +189,31 @@ public static class WebApi
         return await RenderUrl("/maimai/song?id=" + contextId);
     }
 
+    public static async Task<string> MaiMaiSongScore(Guid contextId)
+    {
+        return await RenderUrl("/maimai/song-score?id=" + contextId);
+    }
+
+    public static async Task<string> MaiMaiSongTitles(Guid contextId)
+    {
+        return await RenderUrl("/maimai/song-titles?id=" + contextId);
+    }
+
+    public static async Task<string> MaiMaiDifficultyCurve(long songId, int? levelIdx)
+    {
+        return await RenderUrl("/maimai/difficulty-curve?id=" + songId + (levelIdx == null ? "" : "&idx=" + levelIdx));
+    }
+
+    public static async Task<string> MaiMaiDifficultyCurveRank(string kind, string value)
+    {
+        return await RenderUrl($"/maimai/curve-rank?{kind}={Uri.EscapeDataString(value)}");
+    }
+
+    public static async Task<string> MaiMaiDanCourse(string version, string dani)
+    {
+        return await RenderUrl("/maimai/dan-course?ver=" + version + "&dani=" + Uri.EscapeDataString(dani));
+    }
+
     public static async Task<string> OngekiSong(int id)
     {
         return await RenderUrl($"/ongeki/song/{id}");
